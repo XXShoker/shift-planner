@@ -18,21 +18,13 @@ if 'debug_log' not in st.session_state:
 
 # --- Функция проверки пересечения смен ---
 def has_overlap(shift_id, employee, shifts_df):
-    """
-    Проверяет, есть ли у сотрудника employee пересекающиеся смены в тот же день,
-    исключая текущую смену shift_id.
-    Возвращает (True, список пересекающихся смен) или (False, []).
-    """
     if not employee:
-        return False, []  # пустой сотрудник не может пересекаться
-
-    # Находим текущую смену
+        return False, []
     current_shift = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
     current_date = current_shift['Date']
     current_start = current_shift['Start']
     current_end = current_shift['End']
 
-    # Все смены этого сотрудника в тот же день, кроме текущей
     other_shifts = shifts_df[
         (shifts_df['Date'] == current_date) &
         (shifts_df['Employee'] == employee) &
@@ -41,22 +33,19 @@ def has_overlap(shift_id, employee, shifts_df):
 
     overlapping = []
     for _, other in other_shifts.iterrows():
-        # Проверяем пересечение интервалов
         if not (current_end <= other['Start'] or current_start >= other['End']):
             overlapping.append(other)
-
     return len(overlapping) > 0, overlapping
 
-# --- Функция обновления сотрудника (вызывается при изменении selectbox) ---
+# --- Функция обновления сотрудника ---
 def update_employee(shift_id):
-    """Обновляет поле Employee для смены с указанным shift_id, проверяя пересечения"""
     try:
         shift_id = int(shift_id)
     except:
         pass
 
     selected = st.session_state.get(f"select_{shift_id}", "")
-    log_entry = f"update_employee called: shift_id={shift_id} (type={type(shift_id)}), selected={selected}"
+    log_entry = f"update_employee called: shift_id={shift_id}, selected={selected}"
     st.session_state.debug_log.append(log_entry)
 
     if st.session_state.shifts_df is None:
@@ -65,51 +54,47 @@ def update_employee(shift_id):
         st.rerun()
         return
 
-    # Проверяем, есть ли такой shift_id
     mask = st.session_state.shifts_df['shift_id'] == shift_id
-    count = mask.sum()
-    log_entry = f"  mask sum = {count}"
-    st.session_state.debug_log.append(log_entry)
-
-    if count == 0:
-        st.session_state.last_update = f"❌ Ошибка: shift_id {shift_id} не найден"
+    if not mask.any():
+        st.session_state.last_update = f"❌ shift_id {shift_id} не найден"
         st.toast(st.session_state.last_update)
         st.rerun()
         return
 
-    # Получаем старую запись
     old_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
 
-    # Если выбран тот же сотрудник или пусто — разрешаем
-    if selected == old_value:
-        # Ничего не меняем
-        st.session_state.last_update = f"⏭️ Смена {shift_id}: значение не изменилось"
+    # Если выбрали пустого сотрудника — всегда разрешаем
+    if not selected:
+        st.session_state.shifts_df.loc[mask, 'Employee'] = ''
+        st.session_state.last_update = f"✅ Смена {shift_id} очищена"
         st.toast(st.session_state.last_update)
         st.rerun()
         return
 
-    # Проверка на пересечение, если назначаем реального сотрудника (не пусто)
-    if selected:
-        overlap, overlapping_shifts = has_overlap(shift_id, selected, st.session_state.shifts_df)
-        if overlap:
-            # Формируем сообщение о пересечении
-            msg = f"⚠️ Пересечение: {selected} уже работает "
-            for o in overlapping_shifts:
-                msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
-            st.session_state.last_update = msg
-            st.toast(msg, icon="⚠️")
-            # Не обновляем DataFrame, просто выходим
-            st.rerun()
-            return
+    # Если выбран тот же сотрудник — ничего не делаем
+    if selected == old_value:
+        st.session_state.last_update = f"⏭️ Смена {shift_id}: без изменений"
+        st.toast(st.session_state.last_update)
+        st.rerun()
+        return
 
-    # Если всё хорошо или selected пустой, обновляем
+    # Проверка пересечения для нового сотрудника
+    overlap, overlapping_shifts = has_overlap(shift_id, selected, st.session_state.shifts_df)
+    if overlap:
+        # При пересечении ставим смену пустой
+        st.session_state.shifts_df.loc[mask, 'Employee'] = ''
+        msg = f"⚠️ Пересечение: {selected} уже работает "
+        for o in overlapping_shifts:
+            msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
+        st.session_state.last_update = msg
+        st.toast(msg, icon="⚠️")
+        st.rerun()
+        return
+
+    # Всё хорошо — назначаем
     st.session_state.shifts_df.loc[mask, 'Employee'] = selected
-    new_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
-    log_entry = f"  updated: '{old_value}' -> '{new_value}'"
-    st.session_state.debug_log.append(log_entry)
-    st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
+    st.session_state.last_update = f"✅ Смена {shift_id} → {selected}"
     st.toast(st.session_state.last_update)
-
     st.rerun()
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
@@ -135,7 +120,6 @@ if uploaded_file is not None and st.session_state.shifts_df is None:
     try:
         content = uploaded_file.getvalue().decode('utf-8')
         
-        # Определяем разделитель
         if ';' in content.split('\n')[0]:
             df_analytics = pd.read_csv(uploaded_file, delimiter=';')
         elif ',' in content.split('\n')[0]:
@@ -164,7 +148,6 @@ if uploaded_file is not None and st.session_state.shifts_df is None:
             st.subheader("Загруженные данные от аналитиков")
             st.dataframe(df_analytics, use_container_width=True)
             
-            # Разворачиваем Count в отдельные строки с уникальным ID
             expanded_rows = []
             shift_id = 0
             for idx, row in df_analytics.iterrows():
@@ -199,7 +182,6 @@ if st.session_state.shifts_df is not None:
     st.markdown("---")
     st.header("📅 Шаг 2: Планирование смен")
     
-    # Выбор даты
     available_dates = sorted(st.session_state.shifts_df['Date'].unique())
     
     if len(available_dates) > 0:
@@ -207,7 +189,6 @@ if st.session_state.shifts_df is not None:
         with col1:
             selected_date = st.selectbox("Выберите дату", available_dates, key="date_selector")
         
-        # Фильтруем смены для выбранной даты
         daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
         daily_shifts.reset_index(drop=True, inplace=True)
         
@@ -217,25 +198,19 @@ if st.session_state.shifts_df is not None:
         with col_timeline:
             st.subheader("Визуализация смен")
             
-            # Создаем вертикальную временную шкалу
             fig = go.Figure()
-            
-            # Цвета для сотрудников
             colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
             
-            # Добавляем блоки смен
             for i, shift in daily_shifts.iterrows():
                 start_hour = shift['Start']
                 end_hour = shift['End']
                 
-                # Выбираем цвет
                 if shift['Employee']:
                     color_idx = hash(shift['Employee']) % len(colors)
                     color = colors[color_idx]
                 else:
                     color = '#CCCCCC'
                 
-                # Рисуем блок смены
                 fig.add_trace(go.Scatter(
                     x=[i, i, i, i],
                     y=[start_hour, end_hour, end_hour, start_hour],
@@ -249,7 +224,6 @@ if st.session_state.shifts_df is not None:
                     showlegend=False
                 ))
                 
-                # Добавляем имя сотрудника внутри блока
                 if shift['Employee']:
                     text_color = 'white'
                     bg_color = 'rgba(0,0,0,0.6)'
@@ -269,7 +243,6 @@ if st.session_state.shifts_df is not None:
                     borderpad=3
                 )
             
-            # Настройка осей
             hours = list(range(24))
             hour_labels = [f"{h:02d}:00" for h in hours]
             
@@ -298,7 +271,6 @@ if st.session_state.shifts_df is not None:
                 hovermode='closest'
             )
             
-            # Добавляем разделители
             for i in range(len(daily_shifts) + 1):
                 fig.add_vline(x=i - 0.5, line_width=1, line_color='gray', line_dash='dash')
             
@@ -307,7 +279,6 @@ if st.session_state.shifts_df is not None:
         with col_employees:
             st.subheader("👥 Управление сотрудниками")
             
-            # Статистика
             total_shifts = len(daily_shifts)
             assigned_shifts = len(daily_shifts[daily_shifts['Employee'] != ''])
             unassigned_shifts = total_shifts - assigned_shifts
@@ -320,7 +291,6 @@ if st.session_state.shifts_df is not None:
             - Часов: {daily_shifts['Duration'].sum()}
             """)
             
-            # --- Список сотрудников с возможностью удаления ---
             st.markdown("---")
             st.subheader("📋 Список сотрудников")
             
@@ -337,7 +307,6 @@ if st.session_state.shifts_df is not None:
             else:
                 st.write("_Нет добавленных сотрудников_")
             
-            # --- Добавление нового сотрудника ---
             st.markdown("---")
             st.subheader("➕ Добавить сотрудника")
             
@@ -354,32 +323,28 @@ if st.session_state.shifts_df is not None:
                 else:
                     st.warning("Введите имя сотрудника")
         
-        # --- РЕДАКТОР НАЗНАЧЕНИЙ С МГНОВЕННЫМ СОХРАНЕНИЕМ (on_change) ---
+        # --- РЕДАКТОР НАЗНАЧЕНИЙ ---
         st.markdown("---")
         st.header("✏️ Назначение сотрудников на смены")
         
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Для каждой смены создаем selectbox с callback
         for idx, shift in daily_shifts.iterrows():
             col1, col2, col3 = st.columns([2, 2, 4])
             
             col1.write(f"**Смена {idx+1}**")
             col2.write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
-            col1.caption(f"ID: {shift['shift_id']}")  # Показываем ID для отладки
+            col1.caption(f"ID: {shift['shift_id']}")
             
             if st.session_state.available_employees:
                 employee_options = [''] + sorted(st.session_state.available_employees)
-                
-                # Текущий сотрудник
                 current = shift['Employee']
                 if current in employee_options:
                     default_idx = employee_options.index(current)
                 else:
                     default_idx = 0
                 
-                # Используем уникальный ключ и on_change
                 col3.selectbox(
                     f"Сотрудник",
                     options=employee_options,
@@ -394,14 +359,13 @@ if st.session_state.shifts_df is not None:
             
             st.divider()
         
-        # --- Кнопка для очистки всех назначений ---
         if st.button("🗑️ Очистить все назначения на эту дату", use_container_width=True):
             mask = st.session_state.shifts_df['Date'] == selected_date
             st.session_state.shifts_df.loc[mask, 'Employee'] = ''
             st.rerun()
         
-        # --- ОТЛАДКА: показать реальное состояние данных ---
-        with st.expander("🔍 Отладка: данные shifts_df (проверка назначений)"):
+        # --- ОТЛАДКА ---
+        with st.expander("🔍 Отладка: данные shifts_df"):
             st.write(f"**Последнее обновление:** {st.session_state.last_update}")
             debug_data = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
             st.dataframe(debug_data[['shift_id', 'Start', 'End', 'Employee']])
@@ -413,19 +377,16 @@ if st.session_state.shifts_df is not None:
             st.write("**Лог отладки (последние 10 записей):**")
             st.write(st.session_state.debug_log[-10:])
         
-        # --- Экспорт результатов ---
+        # --- ЭКСПОРТ ---
         st.markdown("---")
         st.header("📥 Шаг 3: Экспорт результатов")
         
-        # Получаем актуальные данные для выбранной даты
         current_daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Для аналитиков (с назначениями)")
-            
-            # Группируем обратно в исходный формат с сотрудниками
             result_data = []
             for (date, start, duration), group in current_daily_shifts.groupby(['Date', 'Start', 'Duration']):
                 employees = [e for e in group['Employee'] if e != '']
@@ -436,10 +397,8 @@ if st.session_state.shifts_df is not None:
                     'Count': len(group),
                     'Employees': ', '.join(employees) if employees else 'не назначены'
                 })
-            
             result_df = pd.DataFrame(result_data)
             st.dataframe(result_df, use_container_width=True)
-            
             csv_analytics = result_df.to_csv(index=False, sep=';')
             st.download_button(
                 "📥 Скачать для аналитиков",
@@ -451,7 +410,6 @@ if st.session_state.shifts_df is not None:
         
         with col2:
             st.subheader("Для сотрудников (индивидуальное расписание)")
-            
             employee_view = current_daily_shifts[current_daily_shifts['Employee'] != ''].copy()
             if not employee_view.empty:
                 employee_view['Время'] = employee_view.apply(
@@ -460,9 +418,7 @@ if st.session_state.shifts_df is not None:
                 employee_view = employee_view[['Employee', 'Время', 'Duration']]
                 employee_view.columns = ['Сотрудник', 'Время работы', 'Часов']
                 employee_view = employee_view.sort_values('Сотрудник')
-                
                 st.dataframe(employee_view, use_container_width=True)
-                
                 csv_employees = employee_view.to_csv(index=False, sep=';')
                 st.download_button(
                     "📋 Скачать для сотрудников",
@@ -474,7 +430,6 @@ if st.session_state.shifts_df is not None:
             else:
                 st.info("Нет назначенных сотрудников")
         
-        # --- Кнопка сброса ---
         if st.button("🔄 Начать заново (загрузить новый файл)"):
             st.session_state.shifts_df = None
             st.session_state.available_employees = []
