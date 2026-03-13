@@ -12,6 +12,15 @@ if 'shifts_df' not in st.session_state:
 if 'available_employees' not in st.session_state:
     st.session_state.available_employees = []
 
+# --- Функция обновления сотрудника (вызывается при изменении selectbox) ---
+def update_employee(shift_id):
+    """Обновляет поле Employee для смены с указанным shift_id"""
+    selected = st.session_state[f"select_{shift_id}"]
+    st.session_state.shifts_df.loc[
+        st.session_state.shifts_df['shift_id'] == shift_id, 
+        'Employee'
+    ] = selected
+
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
 
@@ -254,63 +263,42 @@ if st.session_state.shifts_df is not None:
                 else:
                     st.warning("Введите имя сотрудника")
         
-        # --- ПРОСТЫЕ КНОПКИ ДЛЯ КАЖДОЙ СМЕНЫ ---
+        # --- РЕДАКТОР НАЗНАЧЕНИЙ С МГНОВЕННЫМ СОХРАНЕНИЕМ (on_change) ---
         st.markdown("---")
         st.header("✏️ Назначение сотрудников на смены")
         
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Для каждой смены создаем отдельную строку с кнопкой
+        # Для каждой смены создаем selectbox с callback
         for idx, shift in daily_shifts.iterrows():
-            col1, col2, col3, col4 = st.columns([2, 2, 3, 2])
+            col1, col2, col3 = st.columns([2, 2, 4])
             
             col1.write(f"**Смена {idx+1}**")
             col2.write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
             
-            # Текущий сотрудник
-            current_emp = shift['Employee'] if shift['Employee'] else "❌ Не назначен"
-            col3.write(f"👤 {current_emp}")
-            
-            # Кнопка для назначения
-            if st.button(f"✏️ Назначить", key=f"btn_{shift['shift_id']}"):
-                st.session_state[f"editing_{shift['shift_id']}"] = True
-            
-            # Если нажата кнопка, показываем выбор сотрудника
-            if st.session_state.get(f"editing_{shift['shift_id']}", False):
-                with st.form(key=f"form_{shift['shift_id']}"):
-                    employee_options = [''] + sorted(st.session_state.available_employees)
-                    
-                    # Индекс текущего сотрудника
-                    current = shift['Employee']
-                    if current in employee_options:
-                        default_idx = employee_options.index(current)
-                    else:
-                        default_idx = 0
-                    
-                    selected = st.selectbox(
-                        "Выберите сотрудника",
-                        options=employee_options,
-                        index=default_idx,
-                        key=f"select_{shift['shift_id']}"
-                    )
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.form_submit_button("💾 Сохранить"):
-                            # Сохраняем назначение
-                            st.session_state.shifts_df.loc[
-                                st.session_state.shifts_df['shift_id'] == shift['shift_id'], 
-                                'Employee'
-                            ] = selected
-                            st.session_state[f"editing_{shift['shift_id']}"] = False
-                            st.success("Сохранено!")
-                            st.rerun()
-                    
-                    with col2:
-                        if st.form_submit_button("❌ Отмена"):
-                            st.session_state[f"editing_{shift['shift_id']}"] = False
-                            st.rerun()
+            if st.session_state.available_employees:
+                employee_options = [''] + sorted(st.session_state.available_employees)
+                
+                # Текущий сотрудник
+                current = shift['Employee']
+                if current in employee_options:
+                    default_idx = employee_options.index(current)
+                else:
+                    default_idx = 0
+                
+                # Используем уникальный ключ и on_change
+                col3.selectbox(
+                    f"Сотрудник",
+                    options=employee_options,
+                    index=default_idx,
+                    key=f"select_{shift['shift_id']}",
+                    on_change=update_employee,
+                    args=(shift['shift_id'],),
+                    label_visibility="collapsed"
+                )
+            else:
+                col3.info("Нет сотрудников")
             
             st.divider()
         
