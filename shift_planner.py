@@ -76,7 +76,7 @@ uploaded_file = st.file_uploader(
     key="file_uploader"
 )
 
-if uploaded_file is not None:
+if uploaded_file is not None and st.session_state.shifts_df is None:
     try:
         content = uploaded_file.getvalue().decode('utf-8')
         
