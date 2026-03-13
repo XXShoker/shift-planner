@@ -11,6 +11,8 @@ if 'shifts_df' not in st.session_state:
     st.session_state.shifts_df = None
 if 'available_employees' not in st.session_state:
     st.session_state.available_employees = []
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = datetime.now()
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -70,11 +72,11 @@ if uploaded_file is not None:
             for idx, row in df_analytics.iterrows():
                 for i in range(int(row['Count'])):
                     expanded_rows.append({
-                        'shift_id': shift_id,  # Уникальный ID для каждой смены
+                        'shift_id': shift_id,
                         'Date': row['Date'],
                         'Start': int(row['Start']),
                         'Duration': int(row['Duration']),
-                        'Employee': ''  # Пустое поле для сборщика
+                        'Employee': ''
                     })
                     shift_id += 1
             
@@ -133,7 +135,7 @@ if st.session_state.shifts_df is not None:
                     color_idx = hash(shift['Employee']) % len(colors)
                     color = colors[color_idx]
                 else:
-                    color = '#CCCCCC'  # Серый для неназначенных
+                    color = '#CCCCCC'
                 
                 # Рисуем блок смены
                 fig.add_trace(go.Scatter(
@@ -229,7 +231,6 @@ if st.session_state.shifts_df is not None:
                     col1, col2 = st.columns([3, 1])
                     col1.write(f"• {emp}")
                     if col2.button("❌", key=f"del_{emp}"):
-                        # Проверяем, есть ли сотрудник в сменах
                         if emp in st.session_state.shifts_df['Employee'].values:
                             st.warning(f"Сначала уберите {emp} из всех смен!")
                         else:
@@ -263,6 +264,12 @@ if st.session_state.shifts_df is not None:
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
+        # Создаем кнопку для принудительного обновления
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("🔄 Обновить статус"):
+                st.rerun()
+        
         # Создаем таблицу для назначений
         for idx, shift in daily_shifts.iterrows():
             cols = st.columns([1, 2, 1, 3, 1])
@@ -281,30 +288,32 @@ if st.session_state.shifts_df is not None:
                 if current_employee in employee_options:
                     current_idx = employee_options.index(current_employee)
                 
-                # Создаем selectbox
+                # Создаем уникальный ключ для каждого selectbox
+                select_key = f"select_{shift['shift_id']}_{st.session_state.last_update.timestamp()}"
+                
+                # Отображаем selectbox
                 selected = cols[3].selectbox(
-                    f"employee_{shift['shift_id']}",
+                    f"Сотрудник для смены {idx+1}",
                     options=employee_options,
                     index=current_idx,
                     label_visibility="collapsed",
-                    key=f"select_{shift['shift_id']}"
+                    key=select_key
                 )
                 
-                # Если выбор изменился, обновляем
+                # Если выбор изменился, обновляем напрямую
                 if selected != current_employee:
-                    # Обновляем в основном DataFrame по shift_id
                     st.session_state.shifts_df.loc[
                         st.session_state.shifts_df['shift_id'] == shift['shift_id'], 
                         'Employee'
                     ] = selected
-                    
-                    cols[4].success("✓ Назначено!")
+                    st.session_state.last_update = datetime.now()
                     st.rerun()
+                
+                # Отображаем статус
+                if current_employee:
+                    cols[4].success("✅")
                 else:
-                    if current_employee:
-                        cols[4].success("✅")
-                    else:
-                        cols[4].info("⭕")
+                    cols[4].info("⭕")
             else:
                 cols[3].info("Нет сотрудников")
                 cols[4].write("")
@@ -319,7 +328,6 @@ if st.session_state.shifts_df is not None:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Формат для аналитиков (с группировкой)
             st.subheader("Для аналитиков (с назначениями)")
             
             # Группируем обратно в исходный формат с сотрудниками
@@ -337,7 +345,6 @@ if st.session_state.shifts_df is not None:
             result_df = pd.DataFrame(result_data)
             st.dataframe(result_df, use_container_width=True)
             
-            # Экспорт в CSV
             csv_analytics = result_df.to_csv(index=False, sep=';')
             st.download_button(
                 "📥 Скачать для аналитиков",
@@ -348,7 +355,6 @@ if st.session_state.shifts_df is not None:
             )
         
         with col2:
-            # Формат для сотрудников
             st.subheader("Для сотрудников (индивидуальное расписание)")
             
             employee_view = current_daily_shifts[current_daily_shifts['Employee'] != ''].copy()
