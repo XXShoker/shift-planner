@@ -254,63 +254,71 @@ if st.session_state.shifts_df is not None:
                 else:
                     st.warning("Введите имя сотрудника")
         
-        # --- ПРОСТОЙ РЕДАКТОР НАЗНАЧЕНИЙ ---
+        # --- ПРОСТЫЕ КНОПКИ ДЛЯ КАЖДОЙ СМЕНЫ ---
         st.markdown("---")
         st.header("✏️ Назначение сотрудников на смены")
         
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Используем форму для всех назначений
-        with st.form(key="assignment_form"):
-            st.subheader("Выберите сотрудников для каждой смены")
+        # Для каждой смены создаем отдельную строку с кнопкой
+        for idx, shift in daily_shifts.iterrows():
+            col1, col2, col3, col4 = st.columns([2, 2, 3, 2])
             
-            # Создаем словарь для хранения выбранных значений
-            selected_employees = {}
+            col1.write(f"**Смена {idx+1}**")
+            col2.write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
             
-            # Для каждой смены создаем selectbox
-            for idx, shift in daily_shifts.iterrows():
-                st.write(f"**Смена {idx+1}**: {shift['Start']:02d}:00 - {shift['End']:02d}:00 ({shift['Duration']} ч)")
-                
-                if st.session_state.available_employees:
+            # Текущий сотрудник
+            current_emp = shift['Employee'] if shift['Employee'] else "❌ Не назначен"
+            col3.write(f"👤 {current_emp}")
+            
+            # Кнопка для назначения
+            if st.button(f"✏️ Назначить", key=f"btn_{shift['shift_id']}"):
+                st.session_state[f"editing_{shift['shift_id']}"] = True
+            
+            # Если нажата кнопка, показываем выбор сотрудника
+            if st.session_state.get(f"editing_{shift['shift_id']}", False):
+                with st.form(key=f"form_{shift['shift_id']}"):
                     employee_options = [''] + sorted(st.session_state.available_employees)
                     
-                    # Текущий сотрудник
+                    # Индекс текущего сотрудника
                     current = shift['Employee']
-                    
-                    # Индекс текущего значения
                     if current in employee_options:
                         default_idx = employee_options.index(current)
                     else:
                         default_idx = 0
                     
-                    # Создаем selectbox
                     selected = st.selectbox(
-                        f"Сотрудник для смены {idx+1}",
+                        "Выберите сотрудника",
                         options=employee_options,
                         index=default_idx,
-                        key=f"form_shift_{shift['shift_id']}"
+                        key=f"select_{shift['shift_id']}"
                     )
                     
-                    selected_employees[shift['shift_id']] = selected
-                else:
-                    st.info("Нет доступных сотрудников")
-                    selected_employees[shift['shift_id']] = ''
-                
-                st.divider()
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.form_submit_button("💾 Сохранить"):
+                            # Сохраняем назначение
+                            st.session_state.shifts_df.loc[
+                                st.session_state.shifts_df['shift_id'] == shift['shift_id'], 
+                                'Employee'
+                            ] = selected
+                            st.session_state[f"editing_{shift['shift_id']}"] = False
+                            st.success("Сохранено!")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.form_submit_button("❌ Отмена"):
+                            st.session_state[f"editing_{shift['shift_id']}"] = False
+                            st.rerun()
             
-            # Кнопка сохранения
-            submitted = st.form_submit_button("💾 СОХРАНИТЬ ВСЕ НАЗНАЧЕНИЯ", use_container_width=True)
-            
-            if submitted:
-                # Применяем все изменения
-                for shift_id, employee in selected_employees.items():
-                    st.session_state.shifts_df.loc[
-                        st.session_state.shifts_df['shift_id'] == shift_id, 
-                        'Employee'
-                    ] = employee
-                st.success("✅ Назначения успешно сохранены!")
-                st.rerun()
+            st.divider()
+        
+        # --- Кнопка для очистки всех назначений ---
+        if st.button("🗑️ Очистить все назначения на эту дату", use_container_width=True):
+            mask = st.session_state.shifts_df['Date'] == selected_date
+            st.session_state.shifts_df.loc[mask, 'Employee'] = ''
+            st.rerun()
         
         # --- Экспорт результатов ---
         st.markdown("---")
