@@ -13,25 +13,48 @@ if 'available_employees' not in st.session_state:
     st.session_state.available_employees = []
 if 'last_update' not in st.session_state:
     st.session_state.last_update = "—"
+if 'debug_log' not in st.session_state:
+    st.session_state.debug_log = []
 
 # --- Функция обновления сотрудника (вызывается при изменении selectbox) ---
 def update_employee(shift_id):
     """Обновляет поле Employee для смены с указанным shift_id"""
-    selected = st.session_state[f"select_{shift_id}"]
-    # Проверяем, существует ли такой shift_id в DataFrame
-    if st.session_state.shifts_df is not None:
-        mask = st.session_state.shifts_df['shift_id'] == shift_id
-        if mask.any():
-            # Обновляем запись
-            st.session_state.shifts_df.loc[mask, 'Employee'] = selected
-            st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
-            st.toast(st.session_state.last_update)
-        else:
-            st.session_state.last_update = f"❌ Ошибка: shift_id {shift_id} не найден"
-            st.toast(st.session_state.last_update)
-    else:
+    # Приводим shift_id к int, если он пришёл как str
+    try:
+        shift_id = int(shift_id)
+    except:
+        pass
+
+    selected = st.session_state.get(f"select_{shift_id}", "")
+    log_entry = f"update_employee called: shift_id={shift_id} (type={type(shift_id)}), selected={selected}"
+    st.session_state.debug_log.append(log_entry)
+
+    if st.session_state.shifts_df is None:
         st.session_state.last_update = "❌ Ошибка: shifts_df is None"
         st.toast(st.session_state.last_update)
+        st.rerun()
+        return
+
+    # Проверяем, есть ли такой shift_id
+    mask = st.session_state.shifts_df['shift_id'] == shift_id
+    count = mask.sum()
+    log_entry = f"  mask sum = {count}"
+    st.session_state.debug_log.append(log_entry)
+
+    if count > 0:
+        old_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
+        st.session_state.shifts_df.loc[mask, 'Employee'] = selected
+        new_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
+        log_entry = f"  updated: '{old_value}' -> '{new_value}'"
+        st.session_state.debug_log.append(log_entry)
+        st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
+        st.toast(st.session_state.last_update)
+    else:
+        st.session_state.last_update = f"❌ Ошибка: shift_id {shift_id} не найден"
+        st.toast(st.session_state.last_update)
+        log_entry = f"  ERROR: shift_id not found"
+        st.session_state.debug_log.append(log_entry)
+
     st.rerun()
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
@@ -289,6 +312,7 @@ if st.session_state.shifts_df is not None:
             
             col1.write(f"**Смена {idx+1}**")
             col2.write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
+            col1.caption(f"ID: {shift['shift_id']}")  # Показываем ID для отладки
             
             if st.session_state.available_employees:
                 employee_options = [''] + sorted(st.session_state.available_employees)
@@ -331,6 +355,8 @@ if st.session_state.shifts_df is not None:
             st.write(debug_data.dtypes)
             st.write("**Первые 5 строк всего DataFrame:**")
             st.dataframe(st.session_state.shifts_df.head())
+            st.write("**Лог отладки (последние 10 записей):**")
+            st.write(st.session_state.debug_log[-10:])
         
         # --- Экспорт результатов ---
         st.markdown("---")
