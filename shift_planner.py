@@ -11,8 +11,6 @@ if 'shifts_df' not in st.session_state:
     st.session_state.shifts_df = None
 if 'available_employees' not in st.session_state:
     st.session_state.available_employees = []
-if 'last_update' not in st.session_state:
-    st.session_state.last_update = datetime.now()
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -256,7 +254,7 @@ if st.session_state.shifts_df is not None:
                 else:
                     st.warning("Введите имя сотрудника")
         
-        # --- Редактор назначений ---
+        # --- Редактор назначений с кнопкой "Применить" ---
         st.markdown("---")
         st.header("✏️ Назначение сотрудников на смены")
         
@@ -264,15 +262,13 @@ if st.session_state.shifts_df is not None:
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Создаем кнопку для принудительного обновления
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            if st.button("🔄 Обновить статус"):
-                st.rerun()
+        # Создаем временный словарь для хранения изменений
+        if 'temp_assignments' not in st.session_state:
+            st.session_state.temp_assignments = {}
         
         # Создаем таблицу для назначений
         for idx, shift in daily_shifts.iterrows():
-            cols = st.columns([1, 2, 1, 3, 1])
+            cols = st.columns([1, 2, 1, 3])
             
             cols[0].write(f"**Смена {idx+1}**")
             cols[1].write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
@@ -282,41 +278,64 @@ if st.session_state.shifts_df is not None:
             if st.session_state.available_employees:
                 employee_options = [''] + sorted(st.session_state.available_employees)
                 
-                # Находим индекс текущего сотрудника
+                # Текущий сотрудник
                 current_employee = shift['Employee']
-                current_idx = 0
-                if current_employee in employee_options:
-                    current_idx = employee_options.index(current_employee)
                 
-                # Создаем уникальный ключ для каждого selectbox
-                select_key = f"select_{shift['shift_id']}_{st.session_state.last_update.timestamp()}"
+                # Ключ для этого selectbox
+                select_key = f"temp_shift_{shift['shift_id']}"
+                
+                # Значение по умолчанию - либо временное, либо текущее
+                default_value = st.session_state.temp_assignments.get(shift['shift_id'], current_employee)
+                
+                # Определяем индекс для selectbox
+                if default_value in employee_options:
+                    default_idx = employee_options.index(default_value)
+                else:
+                    default_idx = 0
                 
                 # Отображаем selectbox
                 selected = cols[3].selectbox(
-                    f"Сотрудник для смены {idx+1}",
+                    f"employee_{shift['shift_id']}",
                     options=employee_options,
-                    index=current_idx,
+                    index=default_idx,
                     label_visibility="collapsed",
                     key=select_key
                 )
                 
-                # Если выбор изменился, обновляем напрямую
-                if selected != current_employee:
-                    st.session_state.shifts_df.loc[
-                        st.session_state.shifts_df['shift_id'] == shift['shift_id'], 
-                        'Employee'
-                    ] = selected
-                    st.session_state.last_update = datetime.now()
-                    st.rerun()
-                
-                # Отображаем статус
-                if current_employee:
-                    cols[4].success("✅")
-                else:
-                    cols[4].info("⭕")
+                # Сохраняем выбор во временный словарь
+                if selected != st.session_state.temp_assignments.get(shift['shift_id'], current_employee):
+                    st.session_state.temp_assignments[shift['shift_id']] = selected
             else:
                 cols[3].info("Нет сотрудников")
-                cols[4].write("")
+        
+        # Кнопки для применения/отмены изменений
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("✅ Применить все изменения", use_container_width=True):
+                # Применяем все временные назначения
+                for shift_id, employee in st.session_state.temp_assignments.items():
+                    st.session_state.shifts_df.loc[
+                        st.session_state.shifts_df['shift_id'] == shift_id, 
+                        'Employee'
+                    ] = employee
+                # Очищаем временные назначения
+                st.session_state.temp_assignments = {}
+                st.success("Изменения сохранены!")
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Сбросить изменения", use_container_width=True):
+                st.session_state.temp_assignments = {}
+                st.rerun()
+        
+        with col3:
+            if st.button("🗑️ Очистить все назначения", use_container_width=True):
+                # Очищаем все назначения на текущую дату
+                mask = st.session_state.shifts_df['Date'] == selected_date
+                st.session_state.shifts_df.loc[mask, 'Employee'] = ''
+                st.session_state.temp_assignments = {}
+                st.rerun()
         
         # --- Экспорт результатов ---
         st.markdown("---")
@@ -383,6 +402,7 @@ if st.session_state.shifts_df is not None:
         if st.button("🔄 Начать заново (загрузить новый файл)"):
             st.session_state.shifts_df = None
             st.session_state.available_employees = []
+            st.session_state.temp_assignments = {}
             st.rerun()
     
     else:
