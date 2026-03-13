@@ -1,220 +1,302 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from datetime import datetime
 import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("Shift Planner – GoodTime Style")
+st.title("🎯 Shift Planner – GoodTime Style")
 
-# --- Загружаем CSV ---
-uploaded = st.file_uploader("Upload shifts CSV", type="csv")
-if uploaded:
-    df = pd.read_csv(uploaded)
+# --- Загружаем CSV от аналитиков ---
+st.sidebar.header("📁 Загрузка данных")
+uploaded = st.sidebar.file_uploader("Загрузите CSV от аналитиков", type="csv")
+
+if uploaded is not None:
+    df = pd.read_csv(uploaded, delimiter=';')
 else:
-    # Создаем пример данных, если файл не загружен
+    # Демо-данные, если файл не загружен
+    st.sidebar.info("Используются демо-данные. Загрузите свой CSV для работы.")
     data = {
-        'date': ['2024-01-15', '2024-01-15', '2024-01-15', '2024-01-15'],
-        'id_store': ['Store A', 'Store A', 'Store A', 'Store A'],
-        'start': [9, 10, 14, 15],
-        'duration': [8, 8, 6, 6],
-        'count': [1, 1, 2, 1],
-        'name': ['John', 'Sarah', 'Mike', 'Emma']
+        'Date': ['2024-01-15', '2024-01-15', '2024-01-15', '2024-01-15'],
+        'Start': [9, 10, 14, 15],
+        'Duration': [8, 6, 6, 4],
+        'Count': [2, 1, 3, 1]
     }
     df = pd.DataFrame(data)
 
-# --- Разворачиваем count на позиции ---
-df = df.loc[df.index.repeat(df['count'])].reset_index(drop=True)
-if "name" not in df.columns:
-    df["name"] = ""
+# Показываем загруженные данные
+st.sidebar.subheader("Исходные данные")
+st.sidebar.dataframe(df)
+
+# --- Разворачиваем Count в отдельные строки ---
+expanded_rows = []
+for idx, row in df.iterrows():
+    for i in range(row['Count']):
+        expanded_rows.append({
+            'Date': row['Date'],
+            'Start': row['Start'],
+            'Duration': row['Duration'],
+            'Employee': ''  # Пустое поле для сборщика
+        })
+
+shifts_df = pd.DataFrame(expanded_rows)
+shifts_df['End'] = shifts_df['Start'] + shifts_df['Duration']
 
 # --- Фильтры ---
-col1, col2, col3 = st.columns(3)
-selected_date = col1.selectbox("Date", sorted(df["date"].unique()))
-selected_store = col2.selectbox("Store", sorted(df["id_store"].unique()))
+st.header("📅 Выбор даты")
+available_dates = sorted(shifts_df['Date'].unique())
+selected_date = st.selectbox("Выберите дату", available_dates)
 
-filtered = df[(df.date == selected_date) & (df.id_store == selected_store)].copy()
-filtered.reset_index(drop=True, inplace=True)
+# Фильтруем смены для выбранной даты
+daily_shifts = shifts_df[shifts_df['Date'] == selected_date].copy()
+daily_shifts.reset_index(drop=True, inplace=True)
 
-# --- Создаем временные слоты для оси Y (сверху вниз) ---
-hours = list(range(24))  # 0-24 часа
-hour_labels = [f"{h:02d}:00" for h in hours]
+# --- Интерфейс GoodTime ---
+st.header("📊 Планировщик смен (GoodTime Style)")
 
-# --- Создаем Gantt-подобные блоки (вертикальное расположение) ---
-fig = go.Figure()
+# Создаем колонки для визуализации
+col_timeline, col_employees = st.columns([3, 1])
 
-# Цвета для разных сотрудников
-colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
-
-for i, row in filtered.iterrows():
-    start_hour = row['start']
-    end_hour = start_hour + row['duration']
+with col_timeline:
+    # Создаем вертикальную временную шкалу
+    fig = go.Figure()
     
-    # Создаем вертикальный блок смены
-    fig.add_trace(go.Scatter(
-        x=[i, i, i, i],  # X позиция для каждой смены
-        y=[start_hour, end_hour, end_hour, start_hour],  # Y координаты (время)
-        fill='toself',
-        fillcolor=colors[i % len(colors)],
-        line=dict(color='rgba(255,255,255,0.8)', width=2),
-        mode='lines',
-        name=f"Shift {i+1}",
-        text=[f"{row['name']}<br>{start_hour}:00 - {end_hour}:00" 
-              if row['name'] else f"Shift {i+1}<br>{start_hour}:00 - {end_hour}:00"],
-        hoverinfo='text',
-        showlegend=False
-    ))
+    # Цвета для разных сотрудников
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
     
-    # Добавляем текст внутри блока
-    fig.add_annotation(
-        x=i,
-        y=(start_hour + end_hour) / 2,
-        text=row['name'] if row['name'] else f"Shift {i+1}",
-        showarrow=False,
-        font=dict(size=12, color='white', family='Arial Black'),
-        bgcolor='rgba(0,0,0,0.5)',
-        bordercolor='white',
-        borderwidth=1,
-        borderpad=4
-    )
-
-# Настройка макета
-fig.update_layout(
-    title=f"Shift Schedule - {selected_store} - {selected_date}",
-    xaxis=dict(
-        title="Shifts",
-        tickmode='array',
-        tickvals=list(range(len(filtered))),
-        ticktext=[f"Shift {i+1}" for i in range(len(filtered))],
-        gridcolor='lightgray',
-        showgrid=True
-    ),
-    yaxis=dict(
-        title="Time",
-        tickmode='array',
-        tickvals=hours,
-        ticktext=hour_labels,
-        range=[24, 0],  # Инвертируем ось, чтобы 0:00 было сверху
-        gridcolor='lightgray',
-        showgrid=True,
-        dtick=1
-    ),
-    plot_bgcolor='rgba(240,240,240,0.3)',
-    height=700,
-    margin=dict(l=80, r=20, t=80, b=40),
-    hovermode='closest'
-)
-
-# Добавляем разделители между сменами
-for i in range(len(filtered) + 1):
-    fig.add_vline(x=i - 0.5, line_width=1, line_color='gray', line_dash='dash')
-
-st.plotly_chart(fig, use_container_width=True)
-
-# --- Информация о сменах ---
-st.subheader("📋 Shift Details")
-col1, col2, col3, col4, col5 = st.columns(5)
-
-for i, row in filtered.iterrows():
-    with eval(f"col{(i % 5) + 1}"):
-        end_time = row['start'] + row['duration']
-        color = colors[i % len(colors)]
-        st.markdown(
-            f"""
-            <div style="background-color: {color}20; padding: 10px; border-radius: 5px; margin: 5px 0; border-left: 5px solid {color};">
-                <b>Shift {i+1}</b><br>
-                👤 {row['name'] if row['name'] else 'Unassigned'}<br>
-                ⏰ {row['start']:02d}:00 - {end_time:02d}:00<br>
-                📍 Store: {row['id_store']}
-            </div>
-            """,
-            unsafe_allow_html=True
+    # Добавляем блоки смен
+    for i, shift in daily_shifts.iterrows():
+        start_hour = shift['Start']
+        end_hour = shift['End']
+        
+        # Выбираем цвет в зависимости от сотрудника или серый если не назначен
+        if shift['Employee']:
+            color_idx = hash(shift['Employee']) % len(colors)
+            color = colors[color_idx]
+        else:
+            color = '#CCCCCC'  # Серый для неназначенных
+        
+        # Рисуем блок смены
+        fig.add_trace(go.Scatter(
+            x=[i, i, i, i],
+            y=[start_hour, end_hour, end_hour, start_hour],
+            fill='toself',
+            fillcolor=color,
+            line=dict(color='white', width=2),
+            mode='lines',
+            name=f"Смена {i+1}",
+            text=f"{shift['Employee'] if shift['Employee'] else 'Свободно'}<br>{start_hour}:00 - {end_hour}:00",
+            hoverinfo='text',
+            showlegend=False
+        ))
+        
+        # Добавляем имя сотрудника внутри блока
+        if shift['Employee']:
+            text_color = 'white'
+            bg_color = 'rgba(0,0,0,0.6)'
+        else:
+            text_color = '#666'
+            bg_color = 'rgba(255,255,255,0.9)'
+        
+        fig.add_annotation(
+            x=i,
+            y=(start_hour + end_hour) / 2,
+            text=shift['Employee'] if shift['Employee'] else '???',
+            showarrow=False,
+            font=dict(size=11, color=text_color, family='Arial'),
+            bgcolor=bg_color,
+            bordercolor='white' if shift['Employee'] else '#999',
+            borderwidth=1,
+            borderpad=3
         )
+    
+    # Настройка осей
+    hours = list(range(24))
+    hour_labels = [f"{h:02d}:00" for h in hours]
+    
+    fig.update_layout(
+        xaxis=dict(
+            title="Смены",
+            tickmode='array',
+            tickvals=list(range(len(daily_shifts))),
+            ticktext=[f"Смена {i+1}" for i in range(len(daily_shifts))],
+            gridcolor='lightgray',
+            showgrid=True
+        ),
+        yaxis=dict(
+            title="Время",
+            tickmode='array',
+            tickvals=hours,
+            ticktext=hour_labels,
+            range=[24, 0],  # 0:00 сверху
+            gridcolor='lightgray',
+            showgrid=True,
+            dtick=1
+        ),
+        plot_bgcolor='#F5F5F5',
+        height=600,
+        margin=dict(l=80, r=20, t=40, b=40),
+        hovermode='closest'
+    )
+    
+    # Добавляем разделители между сменами
+    for i in range(len(daily_shifts) + 1):
+        fig.add_vline(x=i - 0.5, line_width=1, line_color='gray', line_dash='dash')
+    
+    st.plotly_chart(fig, use_container_width=True)
 
-# --- Редактируемая таблица ---
-st.subheader("✏️ Edit Shifts")
+with col_employees:
+    st.subheader("👥 Сотрудники")
+    
+    # Список доступных сотрудников (можно добавить своих)
+    if 'available_employees' not in st.session_state:
+        st.session_state.available_employees = ['Иванов', 'Петров', 'Сидоров', 'Смирнов', 'Кузнецов', 'Попов', 'Васильев']
+    
+    # Показываем статистику
+    total_shifts = len(daily_shifts)
+    assigned_shifts = len(daily_shifts[daily_shifts['Employee'] != ''])
+    unassigned_shifts = total_shifts - assigned_shifts
+    
+    st.info(f"""
+    📊 **Статистика**
+    - Всего смен: {total_shifts}
+    - Назначено: {assigned_shifts}
+    - Свободно: {unassigned_shifts}
+    - Часов: {daily_shifts['Duration'].sum()}
+    """)
+    
+    # Кнопка для добавления сотрудника
+    new_employee = st.text_input("Добавить сотрудника")
+    if new_employee and st.button("➕ Добавить"):
+        if new_employee not in st.session_state.available_employees:
+            st.session_state.available_employees.append(new_employee)
+            st.success(f"Сотрудник {new_employee} добавлен!")
+            st.rerun()
 
-# Создаем удобную таблицу для редактирования
+# --- Редактор назначений ---
+st.header("✏️ Назначение сотрудников")
+
+# Создаем удобный интерфейс для назначения
 edited_data = []
-for i, row in filtered.iterrows():
-    end_time = row['start'] + row['duration']
+for i, shift in daily_shifts.iterrows():
     edited_data.append({
-        'Shift': f"Shift {i+1}",
-        'Employee': row['name'],
-        'Start': f"{row['start']:02d}:00",
-        'End': f"{end_time:02d}:00",
-        'Duration': row['duration']
+        '№': i + 1,
+        'Время': f"{shift['Start']:02d}:00 - {shift['End']:02d}:00",
+        'Длительность': f"{shift['Duration']} ч",
+        'Сотрудник': shift['Employee'],
+        'Статус': '✅ Назначено' if shift['Employee'] else '⭕ Свободно'
     })
 
-edited_df = pd.DataFrame(edited_data)
-edited_result = st.data_editor(
-    edited_df,
-    use_container_width=True,
-    column_config={
-        "Shift": st.column_config.TextColumn("Shift", disabled=True),
-        "Employee": st.column_config.TextColumn("Employee Name", width="medium"),
-        "Start": st.column_config.TextColumn("Start Time", width="small"),
-        "End": st.column_config.TextColumn("End Time", disabled=True, width="small"),
-        "Duration": st.column_config.NumberColumn("Hours", disabled=True, width="small")
-    }
-)
+display_df = pd.DataFrame(edited_data)
 
-# Кнопки для экспорта
-col1, col2, col3 = st.columns(3)
+# Создаем редактор с выбором сотрудника
+for i, row in display_df.iterrows():
+    cols = st.columns([1, 2, 1, 2, 1, 1])
+    cols[0].write(f"**{row['№']}**")
+    cols[1].write(row['Время'])
+    cols[2].write(row['Длительность'])
+    
+    # Выпадающий список для выбора сотрудника
+    current_idx = daily_shifts.index[i]
+    current_employee = daily_shifts.loc[current_idx, 'Employee']
+    
+    # Создаем список опций
+    employee_options = [''] + st.session_state.available_employees
+    employee_options.sort()
+    
+    # Индекс текущего выбора
+    if current_employee in employee_options:
+        default_idx = employee_options.index(current_employee)
+    else:
+        default_idx = 0
+    
+    selected = cols[3].selectbox(
+        f"employee_{i}",
+        options=employee_options,
+        index=default_idx,
+        label_visibility="collapsed",
+        key=f"emp_select_{i}"
+    )
+    
+    # Обновляем назначение
+    if selected != current_employee:
+        daily_shifts.loc[current_idx, 'Employee'] = selected
+        cols[4].success("✓")
+    
+    cols[5].write(row['Статус'])
+
+# --- Экспорт результатов ---
+st.header("📥 Экспорт")
+
+# Создаем итоговый DataFrame
+final_df = daily_shifts[['Date', 'Start', 'Duration', 'Employee']].copy()
+final_df['Count'] = 1
+final_df = final_df.groupby(['Date', 'Start', 'Duration']).agg({
+    'Count': 'count',
+    'Employee': lambda x: ', '.join(x) if len(x) > 0 else ''
+}).reset_index()
+
+col1, col2 = st.columns(2)
+
 with col1:
-    csv = filtered.to_csv(index=False)
+    # Показываем итоговые данные
+    st.subheader("Итоговые данные с назначениями")
+    st.dataframe(final_df, use_container_width=True)
+
+with col2:
+    st.subheader("Статистика по сотрудникам")
+    employee_stats = daily_shifts[daily_shifts['Employee'] != ''].groupby('Employee').agg({
+        'Duration': ['count', 'sum']
+    }).round(1)
+    
+    if not employee_stats.empty:
+        employee_stats.columns = ['Смен', 'Часов']
+        st.dataframe(employee_stats, use_container_width=True)
+
+# Кнопки экспорта
+col1, col2 = st.columns(2)
+
+with col1:
+    # Экспорт в CSV для аналитиков
+    csv_for_analytics = final_df.to_csv(index=False, sep=';')
     st.download_button(
-        "📥 Download Updated Shifts CSV",
-        csv,
-        f"shifts_{selected_store}_{selected_date}.csv",
-        "text/csv"
+        "📥 Скачать CSV для аналитиков",
+        csv_for_analytics,
+        f"shifts_with_employees_{selected_date}.csv",
+        "text/csv",
+        use_container_width=True
     )
 
 with col2:
-    if st.button("🔄 Reset to Original"):
-        st.experimental_rerun()
-
-with col3:
-    if st.button("📊 Summary Report"):
-        total_hours = filtered['duration'].sum()
-        assigned = len(filtered[filtered['name'] != ''])
-        unassigned = len(filtered[filtered['name'] == ''])
-        
-        st.info(
-            f"**Summary for {selected_date}**\n\n"
-            f"Total Shifts: {len(filtered)}\n"
-            f"Assigned: {assigned}\n"
-            f"Unassigned: {unassigned}\n"
-            f"Total Hours: {total_hours}"
-        )
-
-# --- Статистика занятости по часам ---
-st.subheader("📊 Hourly Occupancy")
-
-hourly_occupancy = []
-for hour in range(24):
-    employees_at_hour = sum(
-        1 for _, row in filtered.iterrows()
-        if row['start'] <= hour < row['start'] + row['duration']
+    # Экспорт в CSV для сотрудников
+    employee_view = daily_shifts[['Employee', 'Start', 'End', 'Duration']].copy()
+    employee_view = employee_view[employee_view['Employee'] != '']
+    employee_view['Время'] = employee_view.apply(
+        lambda x: f"{x['Start']:02d}:00 - {x['End']:02d}:00", axis=1
     )
-    hourly_occupancy.append(employees_at_hour)
+    employee_csv = employee_view[['Employee', 'Время', 'Duration']].to_csv(index=False, sep=';')
+    
+    st.download_button(
+        "📋 Скачать для сотрудников",
+        employee_csv,
+        f"employee_schedule_{selected_date}.csv",
+        "text/csv",
+        use_container_width=True
+    )
 
-# Создаем график занятости
-fig_occ = go.Figure()
-fig_occ.add_trace(go.Bar(
-    x=hour_labels,
-    y=hourly_occupancy,
-    marker_color='#4ECDC4',
-    text=hourly_occupancy,
-    textposition='outside'
-))
-
-fig_occ.update_layout(
-    title="Number of Employees Working per Hour",
-    xaxis=dict(title="Hour", tickangle=45),
-    yaxis=dict(title="Employees", dtick=1),
-    height=300,
-    showlegend=False
-)
-
-st.plotly_chart(fig_occ, use_container_width=True)
+# --- Справка ---
+with st.expander("ℹ️ Как пользоваться"):
+    st.markdown("""
+    1. **Загрузите CSV** от аналитиков (формат: Date;Start;Duration;Count)
+    2. **Выберите дату** для планирования
+    3. **Назначайте сотрудников** на смены через выпадающие списки
+    4. **Скачайте результат** в двух форматах:
+       - Для аналитиков (с группировкой)
+       - Для сотрудников (индивидуальное расписание)
+    
+    Формат входного CSV:
+    - Date: дата смены
+    - Start: час начала (например, 9)
+    - Duration: длительность в часах
+    - Count: количество человек на эту смену
+    """)
