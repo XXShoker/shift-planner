@@ -77,7 +77,6 @@ if uploaded_file is not None:
             
             st.session_state.shifts_df = pd.DataFrame(expanded_rows)
             st.session_state.shifts_df['End'] = st.session_state.shifts_df['Start'] + st.session_state.shifts_df['Duration']
-            st.session_state.shifts_df['Shift_ID'] = range(len(st.session_state.shifts_df))
             
             st.info(f"📊 Создано {len(st.session_state.shifts_df)} отдельных смен для назначения")
             
@@ -261,55 +260,59 @@ if st.session_state.shifts_df is not None:
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Создаем форму для назначений, чтобы избежать проблем с обновлением
-        with st.form(key="assignments_form"):
-            # Создаем список для хранения новых назначений
-            new_assignments = {}
+        # Создаем таблицу для назначений с немедленным сохранением
+        for i, shift in daily_shifts.iterrows():
+            cols = st.columns([1, 2, 1, 3, 1])
             
-            # Создаем таблицу для назначений
-            for i, shift in daily_shifts.iterrows():
-                cols = st.columns([1, 2, 1, 3])
+            cols[0].write(f"**Смена {i+1}**")
+            cols[1].write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
+            cols[2].write(f"{shift['Duration']} ч")
+            
+            # Выбор сотрудника
+            if st.session_state.available_employees:
+                employee_options = [''] + sorted(st.session_state.available_employees)
                 
-                cols[0].write(f"**Смена {i+1}**")
-                cols[1].write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
-                cols[2].write(f"{shift['Duration']} ч")
-                
-                # Выбор сотрудника
-                if st.session_state.available_employees:
-                    employee_options = [''] + sorted(st.session_state.available_employees)
-                    
-                    # Находим индекс текущего сотрудника
-                    if shift['Employee'] in employee_options:
-                        current_idx = employee_options.index(shift['Employee'])
-                    else:
-                        current_idx = 0
-                    
-                    # Используем selectbox внутри формы
-                    selected = cols[3].selectbox(
-                        f"Сотрудник для смены {i+1}",
-                        options=employee_options,
-                        index=current_idx,
-                        label_visibility="collapsed",
-                        key=f"assign_{i}_{selected_date}"
-                    )
-                    
-                    # Сохраняем выбор
-                    new_assignments[shift['Shift_ID']] = selected
+                # Находим индекс текущего сотрудника
+                if shift['Employee'] in employee_options:
+                    current_idx = employee_options.index(shift['Employee'])
                 else:
-                    cols[3].info("Нет сотрудников")
-            
-            # Кнопка сохранения изменений
-            submitted = st.form_submit_button("💾 Сохранить все назначения", use_container_width=True)
-            
-            if submitted:
-                # Применяем все изменения
-                for shift_id, employee in new_assignments.items():
-                    st.session_state.shifts_df.loc[
-                        st.session_state.shifts_df['Shift_ID'] == shift_id, 
-                        'Employee'
-                    ] = employee
-                st.success("✅ Назначения сохранены!")
-                st.rerun()
+                    current_idx = 0
+                
+                # Используем уникальный ключ для каждого selectbox
+                selected = cols[3].selectbox(
+                    f"##{i}##",  # Скрытый лейбл
+                    options=employee_options,
+                    index=current_idx,
+                    label_visibility="collapsed",
+                    key=f"assign_{selected_date}_{i}_{shift['Start']}_{shift['Duration']}"
+                )
+                
+                # Если выбор изменился, сразу обновляем
+                if selected != shift['Employee']:
+                    # Находим индекс смены в основном DataFrame
+                    mask = ((st.session_state.shifts_df['Date'] == selected_date) & 
+                           (st.session_state.shifts_df['Start'] == shift['Start']) & 
+                           (st.session_state.shifts_df['Duration'] == shift['Duration']) &
+                           (st.session_state.shifts_df['Employee'] == shift['Employee']))
+                    
+                    # Получаем индексы подходящих смен
+                    indices = st.session_state.shifts_df[mask].index
+                    
+                    if len(indices) > 0:
+                        # Обновляем первую подходящую смену
+                        st.session_state.shifts_df.loc[indices[0], 'Employee'] = selected
+                        cols[4].success("✓")
+                        st.rerun()  # Обновляем страницу для отображения изменений
+                    else:
+                        cols[4].error("❌")
+                else:
+                    if shift['Employee']:
+                        cols[4].success("✅")
+                    else:
+                        cols[4].info("⭕")
+            else:
+                cols[3].info("Нет сотрудников")
+                cols[4].write("")
         
         # --- Экспорт результатов ---
         st.markdown("---")
