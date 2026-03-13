@@ -16,10 +16,10 @@ if 'available_employees' not in st.session_state:
 def update_employee(shift_id):
     """Обновляет поле Employee для смены с указанным shift_id"""
     selected = st.session_state[f"select_{shift_id}"]
-    # Создаём копию и обновляем, чтобы гарантировать изменение
-    df = st.session_state.shifts_df.copy()
-    df.loc[df['shift_id'] == shift_id, 'Employee'] = selected
-    st.session_state.shifts_df = df
+    st.toast(f"Смена {shift_id}: назначен {selected if selected else 'пусто'}")
+    # Обновляем напрямую (без копирования, так как копия иногда не сохраняется)
+    st.session_state.shifts_df.loc[st.session_state.shifts_df['shift_id'] == shift_id, 'Employee'] = selected
+    st.rerun()  # Принудительно перезагружаем страницу, чтобы увидеть изменения
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
