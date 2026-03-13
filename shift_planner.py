@@ -10,13 +10,11 @@ st.title("🎯 Shift Planner – GoodTime Style")
 if 'shifts_df' not in st.session_state:
     st.session_state.shifts_df = None
 if 'available_employees' not in st.session_state:
-    # Пустой список сотрудников по умолчанию
     st.session_state.available_employees = []
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
 
-# Показываем пример правильного формата
 with st.expander("📋 Пример правильного формата файла (CSV с разделителем ;)"):
     example_data = """Date;Start;Duration;Count
 2024-01-15;9;8;2
@@ -35,7 +33,6 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     try:
-        # Пробуем разные разделители
         content = uploaded_file.getvalue().decode('utf-8')
         
         # Определяем разделитель
@@ -46,18 +43,13 @@ if uploaded_file is not None:
         else:
             df_analytics = pd.read_csv(uploaded_file, delimiter=';')
         
-        # Очищаем названия колонок от пробелов
         df_analytics.columns = df_analytics.columns.str.strip()
         
-        # Проверяем формат
         required_columns = ['Date', 'Start', 'Duration', 'Count']
-        
-        # Проверяем наличие колонок (без учета регистра)
         df_columns_lower = [col.lower() for col in df_analytics.columns]
         required_lower = [col.lower() for col in required_columns]
         
         if all(col in df_columns_lower for col in required_lower):
-            # Приводим названия колонок к нужному виду
             column_mapping = {}
             for req_col in required_columns:
                 for df_col in df_analytics.columns:
@@ -69,12 +61,10 @@ if uploaded_file is not None:
                 df_analytics = df_analytics.rename(columns=column_mapping)
             
             st.success("✅ Файл успешно загружен!")
-            
-            # Показываем загруженные данные
             st.subheader("Загруженные данные от аналитиков")
             st.dataframe(df_analytics, use_container_width=True)
             
-            # --- Разворачиваем Count в отдельные строки ---
+            # Разворачиваем Count в отдельные строки
             expanded_rows = []
             for idx, row in df_analytics.iterrows():
                 for i in range(int(row['Count'])):
@@ -87,6 +77,7 @@ if uploaded_file is not None:
             
             st.session_state.shifts_df = pd.DataFrame(expanded_rows)
             st.session_state.shifts_df['End'] = st.session_state.shifts_df['Start'] + st.session_state.shifts_df['Duration']
+            st.session_state.shifts_df['Shift_ID'] = range(len(st.session_state.shifts_df))
             
             st.info(f"📊 Создано {len(st.session_state.shifts_df)} отдельных смен для назначения")
             
@@ -235,7 +226,7 @@ if st.session_state.shifts_df is not None:
                 for emp in st.session_state.available_employees[:]:
                     col1, col2 = st.columns([3, 1])
                     col1.write(f"• {emp}")
-                    if col2.button("❌", key=f"del_{emp}"):
+                    if col2.button("❌", key=f"del_{emp}_{selected_date}"):
                         # Проверяем, есть ли сотрудник в сменах
                         if emp in daily_shifts['Employee'].values:
                             st.warning(f"Сначала уберите {emp} из всех смен!")
@@ -298,18 +289,14 @@ if st.session_state.shifts_df is not None:
                 
                 # Обновляем назначение
                 if selected != shift['Employee']:
-                    # Обновляем в daily_shifts
-                    daily_shifts.loc[i, 'Employee'] = selected
+                    # Находим Shift_ID для этой смены
+                    shift_id = shift['Shift_ID']
                     
                     # Обновляем в основном DataFrame
-                    mask = ((st.session_state.shifts_df['Date'] == selected_date) & 
-                           (st.session_state.shifts_df['Start'] == shift['Start']) & 
-                           (st.session_state.shifts_df['Duration'] == shift['Duration']) &
-                           (st.session_state.shifts_df['Employee'] == shift['Employee']))
-                    
-                    indices = st.session_state.shifts_df[mask].index
-                    if len(indices) > 0:
-                        st.session_state.shifts_df.loc[indices[0], 'Employee'] = selected
+                    st.session_state.shifts_df.loc[
+                        st.session_state.shifts_df['Shift_ID'] == shift_id, 
+                        'Employee'
+                    ] = selected
                     
                     cols[4].success("✓")
                     st.rerun()
@@ -326,36 +313,32 @@ if st.session_state.shifts_df is not None:
         st.markdown("---")
         st.header("📥 Шаг 3: Экспорт результатов")
         
-        # Обновляем daily_shifts перед экспортом
-        daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
-        daily_shifts.reset_index(drop=True, inplace=True)
+        # Получаем актуальные данные для выбранной даты
+        current_daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
         
         col1, col2 = st.columns(2)
         
         with col1:
             # Формат для аналитиков (с группировкой)
-            st.subheader("Для аналитиков")
+            st.subheader("Для аналитиков (с назначениями)")
             
-            # Группируем обратно в исходный формат
-            result_df = daily_shifts.copy()
-            
-            # Создаем итоговый DataFrame в формате аналитиков
-            final_analytics = []
-            for (date, start, duration), group in result_df.groupby(['Date', 'Start', 'Duration']):
+            # Группируем обратно в исходный формат с сотрудниками
+            result_data = []
+            for (date, start, duration), group in current_daily_shifts.groupby(['Date', 'Start', 'Duration']):
                 employees = [e for e in group['Employee'] if e != '']
-                final_analytics.append({
+                result_data.append({
                     'Date': date,
                     'Start': start,
                     'Duration': duration,
                     'Count': len(group),
-                    'Employees': ', '.join(employees) if employees else ''
+                    'Employees': ', '.join(employees) if employees else 'не назначены'
                 })
             
-            final_df = pd.DataFrame(final_analytics)
-            st.dataframe(final_df, use_container_width=True)
+            result_df = pd.DataFrame(result_data)
+            st.dataframe(result_df, use_container_width=True)
             
             # Экспорт в CSV
-            csv_analytics = final_df.to_csv(index=False, sep=';')
+            csv_analytics = result_df.to_csv(index=False, sep=';')
             st.download_button(
                 "📥 Скачать для аналитиков",
                 csv_analytics,
@@ -366,15 +349,16 @@ if st.session_state.shifts_df is not None:
         
         with col2:
             # Формат для сотрудников
-            st.subheader("Для сотрудников")
+            st.subheader("Для сотрудников (индивидуальное расписание)")
             
-            employee_view = daily_shifts[daily_shifts['Employee'] != ''].copy()
+            employee_view = current_daily_shifts[current_daily_shifts['Employee'] != ''].copy()
             if not employee_view.empty:
                 employee_view['Время'] = employee_view.apply(
                     lambda x: f"{x['Start']:02d}:00 - {x['End']:02d}:00", axis=1
                 )
                 employee_view = employee_view[['Employee', 'Время', 'Duration']]
                 employee_view.columns = ['Сотрудник', 'Время работы', 'Часов']
+                employee_view = employee_view.sort_values('Сотрудник')
                 
                 st.dataframe(employee_view, use_container_width=True)
                 
@@ -389,6 +373,14 @@ if st.session_state.shifts_df is not None:
             else:
                 st.info("Нет назначенных сотрудников")
         
+        # --- Дополнительно: Показать все назначения ---
+        with st.expander("📋 Детальная таблица всех смен"):
+            display_df = current_daily_shifts[['Start', 'End', 'Duration', 'Employee']].copy()
+            display_df['Start'] = display_df['Start'].apply(lambda x: f"{x:02d}:00")
+            display_df['End'] = display_df['End'].apply(lambda x: f"{x:02d}:00")
+            display_df.columns = ['Начало', 'Конец', 'Длительность', 'Сотрудник']
+            st.dataframe(display_df, use_container_width=True)
+        
         # --- Кнопка сброса ---
         if st.button("🔄 Начать заново (загрузить новый файл)"):
             st.session_state.shifts_df = None
@@ -399,5 +391,4 @@ if st.session_state.shifts_df is not None:
         st.warning("В загруженном файле нет данных")
 
 else:
-    # Показываем инструкцию, если файл еще не загружен
     st.info("👆 Пожалуйста, загрузите файл от аналитиков для начала работы")
