@@ -16,10 +16,10 @@ if 'available_employees' not in st.session_state:
 def update_employee(shift_id):
     """Обновляет поле Employee для смены с указанным shift_id"""
     selected = st.session_state[f"select_{shift_id}"]
-    st.session_state.shifts_df.loc[
-        st.session_state.shifts_df['shift_id'] == shift_id, 
-        'Employee'
-    ] = selected
+    # Создаём копию и обновляем, чтобы гарантировать изменение
+    df = st.session_state.shifts_df.copy()
+    df.loc[df['shift_id'] == shift_id, 'Employee'] = selected
+    st.session_state.shifts_df = df
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -307,6 +307,12 @@ if st.session_state.shifts_df is not None:
             mask = st.session_state.shifts_df['Date'] == selected_date
             st.session_state.shifts_df.loc[mask, 'Employee'] = ''
             st.rerun()
+        
+        # --- ОТЛАДКА: показать реальное состояние данных (можно свернуть) ---
+        with st.expander("🔍 Отладка: данные shifts_df (проверка назначений)"):
+            debug_data = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
+            st.dataframe(debug_data[['shift_id', 'Start', 'End', 'Employee']])
+            st.caption(f"Всего смен: {len(debug_data)}, назначено: {len(debug_data[debug_data['Employee'] != ''])}")
         
         # --- Экспорт результатов ---
         st.markdown("---")
