@@ -16,10 +16,40 @@ if 'last_update' not in st.session_state:
 if 'debug_log' not in st.session_state:
     st.session_state.debug_log = []
 
+# --- Функция проверки пересечения смен ---
+def has_overlap(shift_id, employee, shifts_df):
+    """
+    Проверяет, есть ли у сотрудника employee пересекающиеся смены в тот же день,
+    исключая текущую смену shift_id.
+    Возвращает (True, список пересекающихся смен) или (False, []).
+    """
+    if not employee:
+        return False, []  # пустой сотрудник не может пересекаться
+
+    # Находим текущую смену
+    current_shift = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
+    current_date = current_shift['Date']
+    current_start = current_shift['Start']
+    current_end = current_shift['End']
+
+    # Все смены этого сотрудника в тот же день, кроме текущей
+    other_shifts = shifts_df[
+        (shifts_df['Date'] == current_date) &
+        (shifts_df['Employee'] == employee) &
+        (shifts_df['shift_id'] != shift_id)
+    ]
+
+    overlapping = []
+    for _, other in other_shifts.iterrows():
+        # Проверяем пересечение интервалов
+        if not (current_end <= other['Start'] or current_start >= other['End']):
+            overlapping.append(other)
+
+    return len(overlapping) > 0, overlapping
+
 # --- Функция обновления сотрудника (вызывается при изменении selectbox) ---
 def update_employee(shift_id):
-    """Обновляет поле Employee для смены с указанным shift_id"""
-    # Приводим shift_id к int, если он пришёл как str
+    """Обновляет поле Employee для смены с указанным shift_id, проверяя пересечения"""
     try:
         shift_id = int(shift_id)
     except:
@@ -41,19 +71,44 @@ def update_employee(shift_id):
     log_entry = f"  mask sum = {count}"
     st.session_state.debug_log.append(log_entry)
 
-    if count > 0:
-        old_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
-        st.session_state.shifts_df.loc[mask, 'Employee'] = selected
-        new_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
-        log_entry = f"  updated: '{old_value}' -> '{new_value}'"
-        st.session_state.debug_log.append(log_entry)
-        st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
-        st.toast(st.session_state.last_update)
-    else:
+    if count == 0:
         st.session_state.last_update = f"❌ Ошибка: shift_id {shift_id} не найден"
         st.toast(st.session_state.last_update)
-        log_entry = f"  ERROR: shift_id not found"
-        st.session_state.debug_log.append(log_entry)
+        st.rerun()
+        return
+
+    # Получаем старую запись
+    old_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
+
+    # Если выбран тот же сотрудник или пусто — разрешаем
+    if selected == old_value:
+        # Ничего не меняем
+        st.session_state.last_update = f"⏭️ Смена {shift_id}: значение не изменилось"
+        st.toast(st.session_state.last_update)
+        st.rerun()
+        return
+
+    # Проверка на пересечение, если назначаем реального сотрудника (не пусто)
+    if selected:
+        overlap, overlapping_shifts = has_overlap(shift_id, selected, st.session_state.shifts_df)
+        if overlap:
+            # Формируем сообщение о пересечении
+            msg = f"⚠️ Пересечение: {selected} уже работает "
+            for o in overlapping_shifts:
+                msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
+            st.session_state.last_update = msg
+            st.toast(msg, icon="⚠️")
+            # Не обновляем DataFrame, просто выходим
+            st.rerun()
+            return
+
+    # Если всё хорошо или selected пустой, обновляем
+    st.session_state.shifts_df.loc[mask, 'Employee'] = selected
+    new_value = st.session_state.shifts_df.loc[mask, 'Employee'].iloc[0]
+    log_entry = f"  updated: '{old_value}' -> '{new_value}'"
+    st.session_state.debug_log.append(log_entry)
+    st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
+    st.toast(st.session_state.last_update)
 
     st.rerun()
 
