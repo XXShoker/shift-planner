@@ -15,43 +15,88 @@ if 'available_employees' not in st.session_state:
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
 
+# Показываем пример правильного формата
+with st.expander("📋 Пример правильного формата файла (CSV с разделителем ;)"):
+    example_data = """Date;Start;Duration;Count
+2024-01-15;9;8;2
+2024-01-15;10;6;1
+2024-01-15;14;6;3
+2024-01-16;9;8;1
+2024-01-16;15;4;2"""
+    st.code(example_data, language="csv")
+    st.caption("Файл должен быть в формате CSV с разделителем ';'")
+
 uploaded_file = st.file_uploader(
-    "Загрузите CSV файл (формат: Date;Start;Duration;Count)",
+    "Загрузите CSV файл",
     type="csv",
     key="file_uploader"
 )
 
 if uploaded_file is not None:
-    # Читаем файл
-    df_analytics = pd.read_csv(uploaded_file, delimiter=';')
-    
-    # Проверяем формат
-    required_columns = ['Date', 'Start', 'Duration', 'Count']
-    if all(col in df_analytics.columns for col in required_columns):
-        st.success("✅ Файл успешно загружен!")
+    try:
+        # Пробуем разные разделители
+        content = uploaded_file.getvalue().decode('utf-8')
         
-        # Показываем загруженные данные
-        st.subheader("Загруженные данные от аналитиков")
-        st.dataframe(df_analytics, use_container_width=True)
+        # Определяем разделитель
+        if ';' in content.split('\n')[0]:
+            df_analytics = pd.read_csv(uploaded_file, delimiter=';')
+        elif ',' in content.split('\n')[0]:
+            df_analytics = pd.read_csv(uploaded_file, delimiter=',')
+        else:
+            df_analytics = pd.read_csv(uploaded_file, delimiter=';')  # пробуем стандартный
         
-        # --- Разворачиваем Count в отдельные строки ---
-        expanded_rows = []
-        for idx, row in df_analytics.iterrows():
-            for i in range(row['Count']):
-                expanded_rows.append({
-                    'Date': row['Date'],
-                    'Start': row['Start'],
-                    'Duration': row['Duration'],
-                    'Employee': ''  # Пустое поле для сборщика
-                })
+        # Очищаем названия колонок от пробелов
+        df_analytics.columns = df_analytics.columns.str.strip()
         
-        st.session_state.shifts_df = pd.DataFrame(expanded_rows)
-        st.session_state.shifts_df['End'] = st.session_state.shifts_df['Start'] + st.session_state.shifts_df['Duration']
+        # Проверяем формат
+        required_columns = ['Date', 'Start', 'Duration', 'Count']
         
-        st.info(f"📊 Создано {len(st.session_state.shifts_df)} отдельных смен для назначения")
+        # Проверяем наличие колонок (без учета регистра)
+        df_columns_lower = [col.lower() for col in df_analytics.columns]
+        required_lower = [col.lower() for col in required_columns]
         
-    else:
-        st.error(f"❌ Неверный формат файла. Должны быть колонки: {', '.join(required_columns)}")
+        if all(col in df_columns_lower for col in required_lower):
+            # Приводим названия колонок к нужному виду
+            column_mapping = {}
+            for req_col in required_columns:
+                for df_col in df_analytics.columns:
+                    if df_col.lower() == req_col.lower():
+                        column_mapping[df_col] = req_col
+                        break
+            
+            if column_mapping:
+                df_analytics = df_analytics.rename(columns=column_mapping)
+            
+            st.success("✅ Файл успешно загружен!")
+            
+            # Показываем загруженные данные
+            st.subheader("Загруженные данные от аналитиков")
+            st.dataframe(df_analytics, use_container_width=True)
+            
+            # --- Разворачиваем Count в отдельные строки ---
+            expanded_rows = []
+            for idx, row in df_analytics.iterrows():
+                for i in range(int(row['Count'])):
+                    expanded_rows.append({
+                        'Date': row['Date'],
+                        'Start': int(row['Start']),
+                        'Duration': int(row['Duration']),
+                        'Employee': ''  # Пустое поле для сборщика
+                    })
+            
+            st.session_state.shifts_df = pd.DataFrame(expanded_rows)
+            st.session_state.shifts_df['End'] = st.session_state.shifts_df['Start'] + st.session_state.shifts_df['Duration']
+            
+            st.info(f"📊 Создано {len(st.session_state.shifts_df)} отдельных смен для назначения")
+            
+        else:
+            missing = [col for col in required_columns if col.lower() not in df_columns_lower]
+            st.error(f"❌ Неверный формат файла. Отсутствуют колонки: {', '.join(missing)}")
+            st.write("Найденные колонки в файле:", list(df_analytics.columns))
+            st.stop()
+            
+    except Exception as e:
+        st.error(f"❌ Ошибка при чтении файла: {str(e)}")
         st.stop()
 
 # --- ШАГ 2: Если файл загружен, показываем интерфейс планировщика ---
@@ -216,13 +261,18 @@ if st.session_state.shifts_df is not None:
             # Обновляем назначение
             if selected != shift['Employee']:
                 daily_shifts.loc[i, 'Employee'] = selected
-                st.session_state.shifts_df.loc[
-                    (st.session_state.shifts_df['Date'] == selected_date) & 
-                    (st.session_state.shifts_df['Start'] == shift['Start']) & 
-                    (st.session_state.shifts_df['Duration'] == shift['Duration']) & 
-                    (st.session_state.shifts_df['Employee'] == shift['Employee']), 
-                    'Employee'
-                ] = selected
+                
+                # Обновляем в основном DataFrame
+                mask = ((st.session_state.shifts_df['Date'] == selected_date) & 
+                       (st.session_state.shifts_df['Start'] == shift['Start']) & 
+                       (st.session_state.shifts_df['Duration'] == shift['Duration']) &
+                       (st.session_state.shifts_df['Employee'] == ''))
+                
+                # Находим первую свободную смену с такими параметрами
+                indices = st.session_state.shifts_df[mask].index
+                if len(indices) > 0:
+                    st.session_state.shifts_df.loc[indices[0], 'Employee'] = selected
+                
                 cols[4].success("✓")
             else:
                 if shift['Employee']:
@@ -241,10 +291,10 @@ if st.session_state.shifts_df is not None:
             st.subheader("Для аналитиков")
             
             # Группируем обратно
-            final_df = daily_shifts.groupby(['Date', 'Start', 'Duration']).agg({
+            final_df = daily_shifts.copy()
+            final_df = final_df.groupby(['Date', 'Start', 'Duration']).agg({
                 'Employee': lambda x: ', '.join(x) if any(x != '') else '',
-                'Date': 'first'
-            }).reset_index(drop=True)
+            }).reset_index()
             final_df['Count'] = daily_shifts.groupby(['Date', 'Start', 'Duration']).size().values
             
             st.dataframe(final_df, use_container_width=True)
@@ -294,13 +344,3 @@ if st.session_state.shifts_df is not None:
 else:
     # Показываем инструкцию, если файл еще не загружен
     st.info("👆 Пожалуйста, загрузите файл от аналитиков для начала работы")
-    
-    with st.expander("📋 Пример формата файла"):
-        example_data = pd.DataFrame({
-            'Date': ['2024-01-15', '2024-01-15', '2024-01-16', '2024-01-16'],
-            'Start': [9, 14, 10, 15],
-            'Duration': [8, 6, 8, 4],
-            'Count': [2, 3, 1, 2]
-        })
-        st.dataframe(example_data)
-        st.caption("Файл должен быть в формате CSV с разделителем ';'")
