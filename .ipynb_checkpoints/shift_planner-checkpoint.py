@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
+import numpy as np
 
 st.set_page_config(layout="wide")
-st.title("Planner of Shifts")
+st.title("Shift Planner – Goodtime style")
 
 # --- Загрузка CSV ---
 uploaded = st.file_uploader("Upload shifts CSV", type="csv")
@@ -12,66 +12,40 @@ if uploaded:
 else:
     df = pd.read_csv("shifts.csv")
 
-# --- Разворачиваем count в отдельные смены ---
+# --- Разворачиваем count на отдельные позиции ---
 df = df.loc[df.index.repeat(df['count'])].reset_index(drop=True)
-
 if "name" not in df.columns:
     df["name"] = ""
 
-df["end"] = df["start"] + df["duration"]
-
 # --- Фильтры ---
 col1, col2 = st.columns(2)
-selected_date = col1.selectbox("Date", sorted(df["date"].unique()))
-selected_store = col2.selectbox("Store", sorted(df["id_store"].unique()))
+selected_date = col1.selectbox("Select Date", sorted(df["date"].unique()))
+selected_store = col2.selectbox("Select Store", sorted(df["id_store"].unique()))
 
 filtered = df[(df.date == selected_date) & (df.id_store == selected_store)].copy()
-filtered["shift_index"] = range(len(filtered))
+filtered.reset_index(drop=True, inplace=True)
 
-# --- Редактирование сотрудников ---
-st.subheader("Assign Employees")
-edited = st.data_editor(
-    filtered,
-    column_config={
-        "name": st.column_config.TextColumn("Employee"),
-        "start": st.column_config.NumberColumn("Start"),
-        "duration": st.column_config.NumberColumn("Duration")
-    },
-    use_container_width=True
-)
+# --- Настройка сетки времени ---
+start_hour = 6
+end_hour = 22
+hours = list(range(start_hour, end_hour+1))
 
-edited["end"] = edited["start"] + edited["duration"]
+num_positions = filtered.shape[0]
 
-# --- Построение сетки времени ---
-st.subheader("Shift Grid")
-fig = go.Figure()
+# создаём пустую сетку: строки = часы, колонки = позиции
+grid = pd.DataFrame("", index=hours, columns=[f"Shift {i+1}" for i in range(num_positions)])
 
-for _, row in edited.iterrows():
-    fig.add_shape(
-        type="rect",
-        x0=row["shift_index"],
-        x1=row["shift_index"] + 0.9,
-        y0=row["start"],
-        y1=row["end"],
-        line=dict(color="black"),
-        fillcolor="lightblue"
-    )
-    fig.add_annotation(
-        x=row["shift_index"] + 0.45,
-        y=(row["start"] + row["end"]) / 2,
-        text=row["name"],
-        showarrow=False
-    )
+# заполняем сетку текущими именами
+for i, row in filtered.iterrows():
+    for h in range(row['start'], row['start'] + row['duration']):
+        if h in hours:
+            grid.iloc[hours.index(h), i] = row['name']
 
-fig.update_yaxes(autorange="reversed", title="Hour")
-fig.update_xaxes(title="Shift Index")
-fig.update_layout(height=700)
-st.plotly_chart(fig, use_container_width=True)
+st.subheader("Shift Grid (Time × Positions)")
 
-# --- Экспорт CSV ---
-st.download_button(
-    "Download updated shifts",
-    edited.to_csv(index=False),
-    file_name="updated_shifts.csv",
-    mime="text/csv"
-)
+# --- Редактируемая таблица для директора ---
+edited_grid = st.data_editor(grid, use_container_width=True)
+
+# --- Кнопка экспорт ---
+export_csv = edited_grid.reset_index().rename(columns={"index": "hour"}).to_csv(index=False)
+st.download_button("Download Updated Shifts CSV", export_csv, "updated_shifts.csv", "text/csv")
