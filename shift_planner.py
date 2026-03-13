@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(layout="wide")
-st.title("🎯 Shift Planner – GoodTime Style")
+st.title("🎯 Shift Planner – GoodTime Style (Недельное планирование)")
 
 # --- Инициализация session state ---
 if 'shifts_df' not in st.session_state:
@@ -66,7 +66,6 @@ def update_employee(shift_id):
     # Если выбрали пустого сотрудника — всегда разрешаем
     if not selected:
         st.session_state.shifts_df.loc[mask, 'Employee'] = ''
-        # Очищаем значение в session_state для этого ключа
         if f"select_{shift_id}" in st.session_state:
             st.session_state[f"select_{shift_id}"] = ''
         st.session_state.last_update = f"✅ Смена {shift_id} очищена"
@@ -84,7 +83,6 @@ def update_employee(shift_id):
     # Проверка пересечения для нового сотрудника
     overlap, overlapping_shifts = has_overlap(shift_id, selected, st.session_state.shifts_df)
     if overlap:
-        # При пересечении ставим смену пустой и сбрасываем selectbox
         st.session_state.shifts_df.loc[mask, 'Employee'] = ''
         if f"select_{shift_id}" in st.session_state:
             st.session_state[f"select_{shift_id}"] = ''
@@ -101,6 +99,14 @@ def update_employee(shift_id):
     st.session_state.last_update = f"✅ Смена {shift_id} → {selected}"
     st.toast(st.session_state.last_update)
     st.rerun()
+
+# --- Функция получения дат недели по выбранному дню ---
+def get_week_dates(selected_date):
+    # Находим понедельник недели, содержащей selected_date
+    start_of_week = selected_date - timedelta(days=selected_date.weekday())
+    # Создаём список дат с понедельника по воскресенье
+    week_dates = [(start_of_week + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    return week_dates
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -185,170 +191,101 @@ if uploaded_file is not None and st.session_state.shifts_df is None:
 if st.session_state.shifts_df is not None:
     
     st.markdown("---")
-    st.header("📅 Шаг 2: Планирование смен")
+    st.header("📅 Шаг 2: Планирование на неделю")
     
-    # Выбор даты для визуализации
-    available_dates = sorted(st.session_state.shifts_df['Date'].unique())
+    # Выбор недели: используем календарь для выбора любого дня, затем определяем неделю
+    min_date = datetime.strptime(st.session_state.shifts_df['Date'].min(), "%Y-%m-%d").date()
+    max_date = datetime.strptime(st.session_state.shifts_df['Date'].max(), "%Y-%m-%d").date()
     
-    if len(available_dates) > 0:
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            selected_date = st.selectbox("Выберите дату для просмотра", available_dates, key="date_selector")
+    selected_day = st.date_input(
+        "Выберите любой день недели",
+        value=min_date,
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    # Получаем даты недели
+    week_dates = get_week_dates(selected_day)
+    st.caption(f"Неделя: {week_dates[0]} — {week_dates[-1]}")
+    
+    # Фильтруем смены за эту неделю
+    week_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'].isin(week_dates)].copy()
+    week_shifts.reset_index(drop=True, inplace=True)
+    
+    if len(week_shifts) == 0:
+        st.warning("На этой неделе нет смен.")
+        st.stop()
+    
+    # --- Боковая панель для управления сотрудниками (оставим справа, но можно и слева) ---
+    col_employees, col_main = st.columns([1, 3])
+    
+    with col_employees:
+        st.subheader("👥 Управление сотрудниками")
         
-        # Фильтруем смены для выбранной даты
-        daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
-        daily_shifts.reset_index(drop=True, inplace=True)
+        total_shifts = len(week_shifts)
+        assigned_shifts = len(week_shifts[week_shifts['Employee'] != ''])
+        unassigned_shifts = total_shifts - assigned_shifts
         
-        # --- Интерфейс GoodTime ---
-        col_timeline, col_employees = st.columns([3, 1])
+        st.info(f"""
+        📊 **Статистика за неделю**
+        - Всего смен: {total_shifts}
+        - Назначено: {assigned_shifts}
+        - Свободно: {unassigned_shifts}
+        - Часов: {week_shifts['Duration'].sum()}
+        """)
         
-        with col_timeline:
-            st.subheader("Визуализация смен")
-            
-            # Проверяем, есть ли назначенные смены на эту дату
-            has_assigned = len(daily_shifts[daily_shifts['Employee'] != '']) > 0
-            
-            if has_assigned:
-                fig = go.Figure()
-                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
-                
-                for i, shift in daily_shifts.iterrows():
-                    start_hour = shift['Start']
-                    end_hour = shift['End']
-                    
-                    if shift['Employee']:
-                        color_idx = hash(shift['Employee']) % len(colors)
-                        color = colors[color_idx]
-                    else:
-                        color = '#CCCCCC'
-                    
-                    fig.add_trace(go.Scatter(
-                        x=[i, i, i, i],
-                        y=[start_hour, end_hour, end_hour, start_hour],
-                        fill='toself',
-                        fillcolor=color,
-                        line=dict(color='white', width=2),
-                        mode='lines',
-                        name=f"Смена {i+1}",
-                        text=f"{shift['Employee'] if shift['Employee'] else 'Свободно'}<br>{start_hour}:00 - {end_hour}:00",
-                        hoverinfo='text',
-                        showlegend=False
-                    ))
-                    
-                    if shift['Employee']:
-                        text_color = 'white'
-                        bg_color = 'rgba(0,0,0,0.6)'
-                    else:
-                        text_color = '#666'
-                        bg_color = 'rgba(255,255,255,0.9)'
-                    
-                    fig.add_annotation(
-                        x=i,
-                        y=(start_hour + end_hour) / 2,
-                        text=shift['Employee'] if shift['Employee'] else '???',
-                        showarrow=False,
-                        font=dict(size=11, color=text_color, family='Arial'),
-                        bgcolor=bg_color,
-                        bordercolor='white' if shift['Employee'] else '#999',
-                        borderwidth=1,
-                        borderpad=3
-                    )
-                
-                hours = list(range(24))
-                hour_labels = [f"{h:02d}:00" for h in hours]
-                
-                fig.update_layout(
-                    xaxis=dict(
-                        title="Смены",
-                        tickmode='array',
-                        tickvals=list(range(len(daily_shifts))),
-                        ticktext=[f"Смена {i+1}" for i in range(len(daily_shifts))],
-                        gridcolor='lightgray',
-                        showgrid=True
-                    ),
-                    yaxis=dict(
-                        title="Время",
-                        tickmode='array',
-                        tickvals=hours,
-                        ticktext=hour_labels,
-                        range=[24, 0],
-                        gridcolor='lightgray',
-                        showgrid=True,
-                        dtick=1
-                    ),
-                    plot_bgcolor='#F5F5F5',
-                    height=600,
-                    margin=dict(l=80, r=20, t=40, b=40),
-                    hovermode='closest'
-                )
-                
-                for i in range(len(daily_shifts) + 1):
-                    fig.add_vline(x=i - 0.5, line_width=1, line_color='gray', line_dash='dash')
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("👆 Нет назначенных смен на эту дату. Визуализация появится после назначения сотрудников.")
-        
-        with col_employees:
-            st.subheader("👥 Управление сотрудниками")
-            
-            total_shifts = len(daily_shifts)
-            assigned_shifts = len(daily_shifts[daily_shifts['Employee'] != ''])
-            unassigned_shifts = total_shifts - assigned_shifts
-            
-            st.info(f"""
-            📊 **Статистика за {selected_date}**
-            - Всего смен: {total_shifts}
-            - Назначено: {assigned_shifts}
-            - Свободно: {unassigned_shifts}
-            - Часов: {daily_shifts['Duration'].sum()}
-            """)
-            
-            st.markdown("---")
-            st.subheader("📋 Список сотрудников")
-            
-            if st.session_state.available_employees:
-                for emp in st.session_state.available_employees[:]:
-                    col1, col2 = st.columns([3, 1])
-                    col1.write(f"• {emp}")
-                    if col2.button("❌", key=f"del_{emp}"):
-                        if emp in st.session_state.shifts_df['Employee'].values:
-                            st.warning(f"Сначала уберите {emp} из всех смен!")
-                        else:
-                            st.session_state.available_employees.remove(emp)
-                            st.rerun()
-            else:
-                st.write("_Нет добавленных сотрудников_")
-            
-            st.markdown("---")
-            st.subheader("➕ Добавить сотрудника")
-            
-            new_employee = st.text_input("Имя сотрудника", key="new_emp_input")
-            
-            if st.button("✅ Добавить сотрудника", use_container_width=True):
-                if new_employee and new_employee.strip():
-                    if new_employee not in st.session_state.available_employees:
-                        st.session_state.available_employees.append(new_employee.strip())
-                        st.success(f"Сотрудник {new_employee} добавлен!")
-                        st.rerun()
-                    else:
-                        st.warning("Такой сотрудник уже есть")
-                else:
-                    st.warning("Введите имя сотрудника")
-        
-        # --- РЕДАКТОР НАЗНАЧЕНИЙ (для выбранной даты) ---
         st.markdown("---")
-        st.header("✏️ Назначение сотрудников на смены (выбранная дата)")
+        st.subheader("📋 Список сотрудников")
+        
+        if st.session_state.available_employees:
+            for emp in st.session_state.available_employees[:]:
+                col1, col2 = st.columns([3, 1])
+                col1.write(f"• {emp}")
+                if col2.button("❌", key=f"del_{emp}"):
+                    if emp in st.session_state.shifts_df['Employee'].values:
+                        st.warning(f"Сначала уберите {emp} из всех смен!")
+                    else:
+                        st.session_state.available_employees.remove(emp)
+                        st.rerun()
+        else:
+            st.write("_Нет добавленных сотрудников_")
+        
+        st.markdown("---")
+        st.subheader("➕ Добавить сотрудника")
+        
+        new_employee = st.text_input("Имя сотрудника", key="new_emp_input")
+        
+        if st.button("✅ Добавить сотрудника", use_container_width=True):
+            if new_employee and new_employee.strip():
+                if new_employee not in st.session_state.available_employees:
+                    st.session_state.available_employees.append(new_employee.strip())
+                    st.success(f"Сотрудник {new_employee} добавлен!")
+                    st.rerun()
+                else:
+                    st.warning("Такой сотрудник уже есть")
+            else:
+                st.warning("Введите имя сотрудника")
+    
+    # --- Основная область: назначение смен на неделю ---
+    with col_main:
+        st.subheader("✏️ Назначение сотрудников на смены (неделя)")
         
         if not st.session_state.available_employees:
-            st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
+            st.warning("⚠️ Сначала добавьте сотрудников в левой панели")
         
-        for idx, shift in daily_shifts.iterrows():
-            col1, col2, col3 = st.columns([2, 2, 4])
+        # Группируем по дням для удобства
+        week_shifts_sorted = week_shifts.sort_values(['Date', 'Start']).reset_index(drop=True)
+        
+        # Отображаем смены сгруппированно по дням
+        current_date = None
+        for idx, shift in week_shifts_sorted.iterrows():
+            if shift['Date'] != current_date:
+                st.markdown(f"### {shift['Date']}")
+                current_date = shift['Date']
             
-            col1.write(f"**Смена {idx+1}**")
-            col2.write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
-            col1.caption(f"ID: {shift['shift_id']}")
+            cols = st.columns([2, 2, 4])
+            cols[0].write(f"**{shift['Start']:02d}:00 - {shift['End']:02d}:00**")
+            cols[1].write(f"({shift['Duration']} ч)")
             
             if st.session_state.available_employees:
                 employee_options = [''] + sorted(st.session_state.available_employees)
@@ -358,7 +295,7 @@ if st.session_state.shifts_df is not None:
                 else:
                     default_idx = 0
                 
-                col3.selectbox(
+                cols[2].selectbox(
                     f"Сотрудник",
                     options=employee_options,
                     index=default_idx,
@@ -368,142 +305,145 @@ if st.session_state.shifts_df is not None:
                     label_visibility="collapsed"
                 )
             else:
-                col3.info("Нет сотрудников")
+                cols[2].info("Нет сотрудников")
             
             st.divider()
         
-        if st.button("🗑️ Очистить все назначения на эту дату", use_container_width=True):
-            mask = st.session_state.shifts_df['Date'] == selected_date
+        # Кнопка очистки всех назначений на неделю
+        if st.button("🗑️ Очистить все назначения на эту неделю", use_container_width=True):
+            mask = st.session_state.shifts_df['Date'].isin(week_dates)
             st.session_state.shifts_df.loc[mask, 'Employee'] = ''
-            # Сбросим соответствующие ключи selectbox
             for shift_id in st.session_state.shifts_df.loc[mask, 'shift_id']:
                 key = f"select_{shift_id}"
                 if key in st.session_state:
                     st.session_state[key] = ''
             st.rerun()
-        
-        # --- ОТЛАДКА (опционально) ---
-        with st.expander("🔍 Отладка: данные shifts_df (текущая дата)"):
-            st.write(f"**Последнее обновление:** {st.session_state.last_update}")
-            debug_data = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
-            st.dataframe(debug_data[['shift_id', 'Start', 'End', 'Employee']])
-            st.caption(f"Всего смен: {len(debug_data)}, назначено: {len(debug_data[debug_data['Employee'] != ''])}")
-            st.write("**Типы данных в DataFrame:**")
-            st.write(debug_data.dtypes)
-            st.write("**Первые 5 строк всего DataFrame:**")
-            st.dataframe(st.session_state.shifts_df.head())
-            st.write("**Лог отладки (последние 10 записей):**")
-            st.write(st.session_state.debug_log[-10:])
-        
-        # --- ЭКСПОРТ по выбранной дате ---
-        st.markdown("---")
-        st.header("📥 Экспорт по выбранной дате")
-        
-        current_daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Для аналитиков (сгруппировано)")
-            result_data = []
-            for (date, start, duration), group in current_daily_shifts.groupby(['Date', 'Start', 'Duration']):
-                employees = [e for e in group['Employee'] if e != '']
-                result_data.append({
-                    'Date': date,
-                    'Start': start,
-                    'Duration': duration,
-                    'Count': len(group),
-                    'Employees': ', '.join(employees) if employees else 'не назначены'
-                })
-            result_df = pd.DataFrame(result_data)
-            st.dataframe(result_df, use_container_width=True)
-            csv_analytics = result_df.to_csv(index=False, sep=';')
-            st.download_button(
-                "📥 Скачать CSV для аналитиков (эта дата)",
-                csv_analytics,
-                f"analytics_shifts_{selected_date}.csv",
-                "text/csv",
-                use_container_width=True
-            )
-        
-        with col2:
-            st.subheader("Для сотрудников (индивидуально)")
-            employee_view = current_daily_shifts[current_daily_shifts['Employee'] != ''].copy()
-            if not employee_view.empty:
-                employee_view['Время'] = employee_view.apply(
-                    lambda x: f"{x['Start']:02d}:00 - {x['End']:02d}:00", axis=1
-                )
-                employee_view = employee_view[['Employee', 'Время', 'Duration']]
-                employee_view.columns = ['Сотрудник', 'Время работы', 'Часов']
-                employee_view = employee_view.sort_values('Сотрудник')
-                st.dataframe(employee_view, use_container_width=True)
-                csv_employees = employee_view.to_csv(index=False, sep=';')
-                st.download_button(
-                    "📋 Скачать CSV для сотрудников (эта дата)",
-                    csv_employees,
-                    f"employee_schedule_{selected_date}.csv",
-                    "text/csv",
-                    use_container_width=True
-                )
-            else:
-                st.info("Нет назначенных сотрудников на эту дату")
-        
-        # --- ВСЕ ДАТЫ: просмотр и экспорт ---
-        st.markdown("---")
-        st.header("📅 Все даты")
-        
-        tab1, tab2 = st.tabs(["📋 Таблица всех смен", "📊 Экспорт всех данных"])
-        
-        with tab1:
-            st.subheader("Детальная таблица всех смен")
-            all_shifts_display = st.session_state.shifts_df[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
-            all_shifts_display['Start'] = all_shifts_display['Start'].apply(lambda x: f"{x:02d}:00")
-            all_shifts_display['End'] = all_shifts_display['End'].apply(lambda x: f"{x:02d}:00")
-            all_shifts_display.columns = ['Дата', 'Начало', 'Конец', 'Длительность', 'Сотрудник']
-            st.dataframe(all_shifts_display, use_container_width=True)
-        
-        with tab2:
-            st.subheader("Сводка по всем датам (для аналитиков)")
-            # Группируем все смены
-            all_grouped = []
-            for (date, start, duration), group in st.session_state.shifts_df.groupby(['Date', 'Start', 'Duration']):
-                employees = [e for e in group['Employee'] if e != '']
-                all_grouped.append({
-                    'Date': date,
-                    'Start': start,
-                    'Duration': duration,
-                    'Count': len(group),
-                    'Employees': ', '.join(employees) if employees else 'не назначены'
-                })
-            all_grouped_df = pd.DataFrame(all_grouped)
-            st.dataframe(all_grouped_df, use_container_width=True)
-            
-            csv_all = all_grouped_df.to_csv(index=False, sep=';')
-            st.download_button(
-                "📥 Скачать CSV (все даты, сгруппировано)",
-                csv_all,
-                "analytics_shifts_all_dates.csv",
-                "text/csv",
-                use_container_width=True
-            )
-            
-            # Дополнительно: сводка по сотрудникам за все даты
-            st.subheader("Сводка по сотрудникам (все даты)")
-            emp_summary = st.session_state.shifts_df[st.session_state.shifts_df['Employee'] != ''].groupby('Employee').agg(
-                Смен=('shift_id', 'count'),
-                Часов=('Duration', 'sum')
-            ).reset_index()
-            emp_summary.columns = ['Сотрудник', 'Количество смен', 'Всего часов']
-            st.dataframe(emp_summary, use_container_width=True)
-        
-        # --- Кнопка полного сброса ---
-        if st.button("🔄 Начать заново (загрузить новый файл)"):
-            st.session_state.shifts_df = None
-            st.session_state.available_employees = []
-            st.rerun()
     
+    # --- ВИЗУАЛИЗАЦИЯ (Gantt) после назначения ---
+    st.markdown("---")
+    st.header("📊 Визуализация расписания на неделю")
+    
+    # Проверяем, есть ли назначенные смены на неделе
+    has_assigned_week = len(week_shifts[week_shifts['Employee'] != '']) > 0
+    
+    if has_assigned_week:
+        fig = go.Figure()
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
+        
+        # Для удобства добавим номер смены в подпись, но можно и по-другому
+        for i, shift in week_shifts_sorted.iterrows():
+            start_hour = shift['Start']
+            end_hour = shift['End']
+            
+            if shift['Employee']:
+                color_idx = hash(shift['Employee']) % len(colors)
+                color = colors[color_idx]
+            else:
+                color = '#CCCCCC'
+            
+            # Подпись на оси X: день + время начала
+            x_label = f"{shift['Date'][5:]} {shift['Start']:02d}"
+            
+            fig.add_trace(go.Bar(
+                x=[x_label],
+                y=[shift['Duration']],
+                base=start_hour,
+                orientation='v',
+                marker_color=color,
+                width=0.7,
+                text=shift['Employee'] if shift['Employee'] else '',
+                textposition='inside',
+                hoverinfo='text',
+                hovertext=f"{shift['Date']} {start_hour}:00-{end_hour}:00<br>{shift['Employee'] if shift['Employee'] else 'Свободно'}",
+                showlegend=False
+            ))
+        
+        fig.update_layout(
+            title="Расписание смен по дням",
+            xaxis=dict(title="Дата и время начала", tickangle=45),
+            yaxis=dict(title="Часы", range=[24, 0], dtick=1, autorange='reversed'),
+            height=600,
+            plot_bgcolor='#F5F5F5',
+            margin=dict(l=80, r=20, t=80, b=100)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("В загруженном файле нет данных")
+        st.info("👆 Нет назначенных смен на эту неделю. Визуализация появится после назначения.")
+    
+    # --- Экспорт (по неделе и все данные) ---
+    st.markdown("---")
+    st.header("📥 Экспорт данных")
+    
+    tab1, tab2, tab3 = st.tabs(["Текущая неделя", "Все даты", "Сводка по сотрудникам"])
+    
+    with tab1:
+        st.subheader("Смены на текущую неделю (сгруппировано)")
+        grouped_week = []
+        for (date, start, duration), group in week_shifts.groupby(['Date', 'Start', 'Duration']):
+            employees = [e for e in group['Employee'] if e != '']
+            grouped_week.append({
+                'Date': date,
+                'Start': start,
+                'Duration': duration,
+                'Count': len(group),
+                'Employees': ', '.join(employees) if employees else 'не назначены'
+            })
+        week_grouped_df = pd.DataFrame(grouped_week)
+        st.dataframe(week_grouped_df, use_container_width=True)
+        
+        csv_week = week_grouped_df.to_csv(index=False, sep=';')
+        st.download_button(
+            "📥 Скачать CSV (текущая неделя)",
+            csv_week,
+            f"week_{week_dates[0]}_to_{week_dates[-1]}.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with tab2:
+        st.subheader("Все смены (детально)")
+        all_shifts_display = st.session_state.shifts_df[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
+        all_shifts_display['Start'] = all_shifts_display['Start'].apply(lambda x: f"{x:02d}:00")
+        all_shifts_display['End'] = all_shifts_display['End'].apply(lambda x: f"{x:02d}:00")
+        all_shifts_display.columns = ['Дата', 'Начало', 'Конец', 'Длительность', 'Сотрудник']
+        st.dataframe(all_shifts_display, use_container_width=True)
+        
+        # Группировка по всем датам
+        all_grouped = []
+        for (date, start, duration), group in st.session_state.shifts_df.groupby(['Date', 'Start', 'Duration']):
+            employees = [e for e in group['Employee'] if e != '']
+            all_grouped.append({
+                'Date': date,
+                'Start': start,
+                'Duration': duration,
+                'Count': len(group),
+                'Employees': ', '.join(employees) if employees else 'не назначены'
+            })
+        all_grouped_df = pd.DataFrame(all_grouped)
+        csv_all = all_grouped_df.to_csv(index=False, sep=';')
+        st.download_button(
+            "📥 Скачать CSV (все даты, сгруппировано)",
+            csv_all,
+            "analytics_shifts_all_dates.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with tab3:
+        st.subheader("Сводка по сотрудникам (все даты)")
+        emp_summary = st.session_state.shifts_df[st.session_state.shifts_df['Employee'] != ''].groupby('Employee').agg(
+            Смен=('shift_id', 'count'),
+            Часов=('Duration', 'sum')
+        ).reset_index()
+        emp_summary.columns = ['Сотрудник', 'Количество смен', 'Всего часов']
+        st.dataframe(emp_summary, use_container_width=True)
+    
+    # --- Кнопка полного сброса ---
+    if st.button("🔄 Начать заново (загрузить новый файл)"):
+        st.session_state.shifts_df = None
+        st.session_state.available_employees = []
+        st.rerun()
 
 else:
     st.info("👆 Пожалуйста, загрузите файл от аналитиков для начала работы")
