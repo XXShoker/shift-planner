@@ -11,15 +11,28 @@ if 'shifts_df' not in st.session_state:
     st.session_state.shifts_df = None
 if 'available_employees' not in st.session_state:
     st.session_state.available_employees = []
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = "—"
 
 # --- Функция обновления сотрудника (вызывается при изменении selectbox) ---
 def update_employee(shift_id):
     """Обновляет поле Employee для смены с указанным shift_id"""
     selected = st.session_state[f"select_{shift_id}"]
-    st.toast(f"Смена {shift_id}: назначен {selected if selected else 'пусто'}")
-    # Обновляем напрямую (без копирования, так как копия иногда не сохраняется)
-    st.session_state.shifts_df.loc[st.session_state.shifts_df['shift_id'] == shift_id, 'Employee'] = selected
-    st.rerun()  # Принудительно перезагружаем страницу, чтобы увидеть изменения
+    # Проверяем, существует ли такой shift_id в DataFrame
+    if st.session_state.shifts_df is not None:
+        mask = st.session_state.shifts_df['shift_id'] == shift_id
+        if mask.any():
+            # Обновляем запись
+            st.session_state.shifts_df.loc[mask, 'Employee'] = selected
+            st.session_state.last_update = f"✅ Смена {shift_id} → {selected if selected else 'пусто'}"
+            st.toast(st.session_state.last_update)
+        else:
+            st.session_state.last_update = f"❌ Ошибка: shift_id {shift_id} не найден"
+            st.toast(st.session_state.last_update)
+    else:
+        st.session_state.last_update = "❌ Ошибка: shifts_df is None"
+        st.toast(st.session_state.last_update)
+    st.rerun()
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -308,11 +321,16 @@ if st.session_state.shifts_df is not None:
             st.session_state.shifts_df.loc[mask, 'Employee'] = ''
             st.rerun()
         
-        # --- ОТЛАДКА: показать реальное состояние данных (можно свернуть) ---
+        # --- ОТЛАДКА: показать реальное состояние данных ---
         with st.expander("🔍 Отладка: данные shifts_df (проверка назначений)"):
+            st.write(f"**Последнее обновление:** {st.session_state.last_update}")
             debug_data = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
             st.dataframe(debug_data[['shift_id', 'Start', 'End', 'Employee']])
             st.caption(f"Всего смен: {len(debug_data)}, назначено: {len(debug_data[debug_data['Employee'] != ''])}")
+            st.write("**Типы данных в DataFrame:**")
+            st.write(debug_data.dtypes)
+            st.write("**Первые 5 строк всего DataFrame:**")
+            st.dataframe(st.session_state.shifts_df.head())
         
         # --- Экспорт результатов ---
         st.markdown("---")
