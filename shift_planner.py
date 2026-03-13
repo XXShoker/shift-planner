@@ -12,8 +12,6 @@ if 'shifts_df' not in st.session_state:
 if 'available_employees' not in st.session_state:
     # Пустой список сотрудников по умолчанию
     st.session_state.available_employees = []
-if 'temp_employee' not in st.session_state:
-    st.session_state.temp_employee = ""
 
 # --- ШАГ 1: Загрузка файла от аналитиков ---
 st.header("📁 Шаг 1: Загрузите файл от аналитиков")
@@ -46,7 +44,7 @@ if uploaded_file is not None:
         elif ',' in content.split('\n')[0]:
             df_analytics = pd.read_csv(uploaded_file, delimiter=',')
         else:
-            df_analytics = pd.read_csv(uploaded_file, delimiter=';')  # пробуем стандартный
+            df_analytics = pd.read_csv(uploaded_file, delimiter=';')
         
         # Очищаем названия колонок от пробелов
         df_analytics.columns = df_analytics.columns.str.strip()
@@ -214,7 +212,7 @@ if st.session_state.shifts_df is not None:
             st.plotly_chart(fig, use_container_width=True)
         
         with col_employees:
-            st.subheader("👥 Сотрудники")
+            st.subheader("👥 Управление сотрудниками")
             
             # Статистика
             total_shifts = len(daily_shifts)
@@ -229,38 +227,40 @@ if st.session_state.shifts_df is not None:
             - Часов: {daily_shifts['Duration'].sum()}
             """)
             
-            # Список добавленных сотрудников
+            # --- Список сотрудников с возможностью удаления ---
+            st.markdown("---")
+            st.subheader("📋 Список сотрудников")
+            
             if st.session_state.available_employees:
-                st.write("**Добавленные сотрудники:**")
-                for emp in st.session_state.available_employees:
-                    st.write(f"• {emp}")
+                for emp in st.session_state.available_employees[:]:
+                    col1, col2 = st.columns([3, 1])
+                    col1.write(f"• {emp}")
+                    if col2.button("❌", key=f"del_{emp}"):
+                        # Проверяем, есть ли сотрудник в сменах
+                        if emp in daily_shifts['Employee'].values:
+                            st.warning(f"Сначала уберите {emp} из всех смен!")
+                        else:
+                            st.session_state.available_employees.remove(emp)
+                            st.rerun()
             else:
                 st.write("_Нет добавленных сотрудников_")
             
+            # --- Добавление нового сотрудника ---
             st.markdown("---")
-            
-            # Добавление нового сотрудника
             st.subheader("➕ Добавить сотрудника")
             
-            # Используем текстовое поле и кнопку
             new_employee = st.text_input("Имя сотрудника", key="new_emp_input")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✅ Добавить", use_container_width=True):
-                    if new_employee and new_employee.strip():
-                        if new_employee not in st.session_state.available_employees:
-                            st.session_state.available_employees.append(new_employee.strip())
-                            st.success(f"Сотрудник {new_employee} добавлен!")
-                            st.rerun()
-                        else:
-                            st.warning("Такой сотрудник уже есть")
+            if st.button("✅ Добавить сотрудника", use_container_width=True):
+                if new_employee and new_employee.strip():
+                    if new_employee not in st.session_state.available_employees:
+                        st.session_state.available_employees.append(new_employee.strip())
+                        st.success(f"Сотрудник {new_employee} добавлен!")
+                        st.rerun()
                     else:
-                        st.warning("Введите имя сотрудника")
-            
-            with col2:
-                if st.button("🗑️ Очистить поле", use_container_width=True):
-                    st.rerun()
+                        st.warning("Такой сотрудник уже есть")
+                else:
+                    st.warning("Введите имя сотрудника")
         
         # --- Редактор назначений ---
         st.markdown("---")
@@ -278,7 +278,7 @@ if st.session_state.shifts_df is not None:
             cols[1].write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
             cols[2].write(f"{shift['Duration']} ч")
             
-            # Выбор сотрудника (только если есть добавленные сотрудники)
+            # Выбор сотрудника
             if st.session_state.available_employees:
                 employee_options = [''] + sorted(st.session_state.available_employees)
                 
@@ -298,18 +298,21 @@ if st.session_state.shifts_df is not None:
                 
                 # Обновляем назначение
                 if selected != shift['Employee']:
-                    # Находим все смены с такими же параметрами (для правильного обновления)
+                    # Обновляем в daily_shifts
+                    daily_shifts.loc[i, 'Employee'] = selected
+                    
+                    # Обновляем в основном DataFrame
                     mask = ((st.session_state.shifts_df['Date'] == selected_date) & 
                            (st.session_state.shifts_df['Start'] == shift['Start']) & 
                            (st.session_state.shifts_df['Duration'] == shift['Duration']) &
                            (st.session_state.shifts_df['Employee'] == shift['Employee']))
                     
-                    # Обновляем первую подходящую смену
                     indices = st.session_state.shifts_df[mask].index
                     if len(indices) > 0:
                         st.session_state.shifts_df.loc[indices[0], 'Employee'] = selected
                     
                     cols[4].success("✓")
+                    st.rerun()
                 else:
                     if shift['Employee']:
                         cols[4].success("✅")
@@ -323,21 +326,35 @@ if st.session_state.shifts_df is not None:
         st.markdown("---")
         st.header("📥 Шаг 3: Экспорт результатов")
         
+        # Обновляем daily_shifts перед экспортом
+        daily_shifts = st.session_state.shifts_df[st.session_state.shifts_df['Date'] == selected_date].copy()
+        daily_shifts.reset_index(drop=True, inplace=True)
+        
         col1, col2 = st.columns(2)
         
         with col1:
             # Формат для аналитиков (с группировкой)
             st.subheader("Для аналитиков")
             
-            # Группируем обратно
-            final_df = daily_shifts.copy()
-            final_df = final_df.groupby(['Date', 'Start', 'Duration']).agg({
-                'Employee': lambda x: ', '.join([e for e in x if e != '']) if any(x != '') else '',
-            }).reset_index()
-            final_df['Count'] = daily_shifts.groupby(['Date', 'Start', 'Duration']).size().values
+            # Группируем обратно в исходный формат
+            result_df = daily_shifts.copy()
             
+            # Создаем итоговый DataFrame в формате аналитиков
+            final_analytics = []
+            for (date, start, duration), group in result_df.groupby(['Date', 'Start', 'Duration']):
+                employees = [e for e in group['Employee'] if e != '']
+                final_analytics.append({
+                    'Date': date,
+                    'Start': start,
+                    'Duration': duration,
+                    'Count': len(group),
+                    'Employees': ', '.join(employees) if employees else ''
+                })
+            
+            final_df = pd.DataFrame(final_analytics)
             st.dataframe(final_df, use_container_width=True)
             
+            # Экспорт в CSV
             csv_analytics = final_df.to_csv(index=False, sep=';')
             st.download_button(
                 "📥 Скачать для аналитиков",
