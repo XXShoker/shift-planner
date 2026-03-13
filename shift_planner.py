@@ -64,16 +64,19 @@ if uploaded_file is not None:
             st.subheader("Загруженные данные от аналитиков")
             st.dataframe(df_analytics, use_container_width=True)
             
-            # Разворачиваем Count в отдельные строки
+            # Разворачиваем Count в отдельные строки с уникальным ID
             expanded_rows = []
+            shift_id = 0
             for idx, row in df_analytics.iterrows():
                 for i in range(int(row['Count'])):
                     expanded_rows.append({
+                        'shift_id': shift_id,  # Уникальный ID для каждой смены
                         'Date': row['Date'],
                         'Start': int(row['Start']),
                         'Duration': int(row['Duration']),
                         'Employee': ''  # Пустое поле для сборщика
                     })
+                    shift_id += 1
             
             st.session_state.shifts_df = pd.DataFrame(expanded_rows)
             st.session_state.shifts_df['End'] = st.session_state.shifts_df['Start'] + st.session_state.shifts_df['Duration']
@@ -225,7 +228,7 @@ if st.session_state.shifts_df is not None:
                 for emp in st.session_state.available_employees[:]:
                     col1, col2 = st.columns([3, 1])
                     col1.write(f"• {emp}")
-                    if col2.button("❌", key=f"del_{emp}_{selected_date}"):
+                    if col2.button("❌", key=f"del_{emp}"):
                         # Проверяем, есть ли сотрудник в сменах
                         if emp in st.session_state.shifts_df['Employee'].values:
                             st.warning(f"Сначала уберите {emp} из всех смен!")
@@ -260,11 +263,11 @@ if st.session_state.shifts_df is not None:
         if not st.session_state.available_employees:
             st.warning("⚠️ Сначала добавьте сотрудников в правой панели")
         
-        # Создаем таблицу для назначений с немедленным сохранением
-        for i, shift in daily_shifts.iterrows():
+        # Создаем таблицу для назначений
+        for idx, shift in daily_shifts.iterrows():
             cols = st.columns([1, 2, 1, 3, 1])
             
-            cols[0].write(f"**Смена {i+1}**")
+            cols[0].write(f"**Смена {idx+1}**")
             cols[1].write(f"{shift['Start']:02d}:00 - {shift['End']:02d}:00")
             cols[2].write(f"{shift['Duration']} ч")
             
@@ -273,40 +276,32 @@ if st.session_state.shifts_df is not None:
                 employee_options = [''] + sorted(st.session_state.available_employees)
                 
                 # Находим индекс текущего сотрудника
-                if shift['Employee'] in employee_options:
-                    current_idx = employee_options.index(shift['Employee'])
-                else:
-                    current_idx = 0
+                current_employee = shift['Employee']
+                current_idx = 0
+                if current_employee in employee_options:
+                    current_idx = employee_options.index(current_employee)
                 
-                # Используем уникальный ключ для каждого selectbox
+                # Создаем selectbox
                 selected = cols[3].selectbox(
-                    f"##{i}##",  # Скрытый лейбл
+                    f"employee_{shift['shift_id']}",
                     options=employee_options,
                     index=current_idx,
                     label_visibility="collapsed",
-                    key=f"assign_{selected_date}_{i}_{shift['Start']}_{shift['Duration']}"
+                    key=f"select_{shift['shift_id']}"
                 )
                 
-                # Если выбор изменился, сразу обновляем
-                if selected != shift['Employee']:
-                    # Находим индекс смены в основном DataFrame
-                    mask = ((st.session_state.shifts_df['Date'] == selected_date) & 
-                           (st.session_state.shifts_df['Start'] == shift['Start']) & 
-                           (st.session_state.shifts_df['Duration'] == shift['Duration']) &
-                           (st.session_state.shifts_df['Employee'] == shift['Employee']))
+                # Если выбор изменился, обновляем
+                if selected != current_employee:
+                    # Обновляем в основном DataFrame по shift_id
+                    st.session_state.shifts_df.loc[
+                        st.session_state.shifts_df['shift_id'] == shift['shift_id'], 
+                        'Employee'
+                    ] = selected
                     
-                    # Получаем индексы подходящих смен
-                    indices = st.session_state.shifts_df[mask].index
-                    
-                    if len(indices) > 0:
-                        # Обновляем первую подходящую смену
-                        st.session_state.shifts_df.loc[indices[0], 'Employee'] = selected
-                        cols[4].success("✓")
-                        st.rerun()  # Обновляем страницу для отображения изменений
-                    else:
-                        cols[4].error("❌")
+                    cols[4].success("✓ Назначено!")
+                    st.rerun()
                 else:
-                    if shift['Employee']:
+                    if current_employee:
                         cols[4].success("✅")
                     else:
                         cols[4].info("⭕")
@@ -377,14 +372,6 @@ if st.session_state.shifts_df is not None:
                 )
             else:
                 st.info("Нет назначенных сотрудников")
-        
-        # --- Дополнительно: Показать все назначения ---
-        with st.expander("📋 Детальная таблица всех смен"):
-            display_df = current_daily_shifts[['Start', 'End', 'Duration', 'Employee']].copy()
-            display_df['Start'] = display_df['Start'].apply(lambda x: f"{x:02d}:00")
-            display_df['End'] = display_df['End'].apply(lambda x: f"{x:02d}:00")
-            display_df.columns = ['Начало', 'Конец', 'Длительность', 'Сотрудник']
-            st.dataframe(display_df, use_container_width=True)
         
         # --- Кнопка сброса ---
         if st.button("🔄 Начать заново (загрузить новый файл)"):
