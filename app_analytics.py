@@ -9,7 +9,7 @@ from data_manager import (
     publish_import,
     delete_import,
     refresh_published_metadata,
-    cleanup_drafts  # добавлено
+    cleanup_drafts
 )
 
 st.set_page_config(layout="wide")
@@ -38,7 +38,7 @@ if uploaded:
 st.markdown("---")
 st.header("📋 Управление загруженными сменами")
 
-# Кнопка принудительной синхронизации с GitHub
+# Кнопка синхронизации с GitHub
 col1, col2 = st.columns([3, 1])
 with col2:
     if st.button("🔄 Синхронизировать с GitHub", use_container_width=True):
@@ -59,7 +59,6 @@ with col1:
             st.info("Битых записей не найдено")
         st.rerun()
 
-# Получаем черновики (локально) и опубликованные (из GitHub, всегда свежие)
 drafts = get_drafts_metadata()
 published = get_published_metadata(force_refresh=True)
 all_items = drafts + published
@@ -85,7 +84,7 @@ for item in filtered:
             if col5.button("🗑️ Удалить", key=f"del_{item['import_id']}"):
                 delete_import(item['import_id'], published=False)
                 st.rerun()
-        else:  # published
+        else:
             if col4.button("📊 Аналитика", key=f"anal_{item['import_id']}"):
                 st.session_state['selected_analytics'] = item['import_id']
                 st.rerun()
@@ -93,13 +92,11 @@ for item in filtered:
                 delete_import(item['import_id'], published=True)
                 st.rerun()
 
-# --- Аналитика по выбранному опубликованному файлу ---
 if 'selected_analytics' in st.session_state:
     import_id = st.session_state['selected_analytics']
     st.markdown("---")
     st.subheader(f"Аналитика для набора: {import_id}")
 
-    # Загружаем смены с назначениями (published=True, чтобы при необходимости скачать из GitHub)
     shifts = load_shifts(import_id, with_assignments=True, published=True)
     if shifts is None:
         st.error("Данные не найдены")
@@ -119,7 +116,6 @@ if 'selected_analytics' in st.session_state:
     col4.metric("Всего часов", total_hours)
     st.metric("Часов назначено", assigned_hours)
 
-    # Группированная таблица (как в исходном CSV)
     st.subheader("Сводка по исходным сменам (сгруппировано)")
     grouped = shifts.groupby(['Date', 'Start', 'Duration']).agg(
         Всего_смен=('shift_id', 'count'),
@@ -129,14 +125,12 @@ if 'selected_analytics' in st.session_state:
     grouped['Свободно'] = grouped['Всего_смен'] - grouped['Назначено']
     st.dataframe(grouped, use_container_width=True)
 
-    # Детальная таблица (под спойлером)
     with st.expander("Показать детальную таблицу всех смен"):
         detailed = shifts[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
         detailed['Start'] = detailed['Start'].apply(lambda x: f"{x:02d}:00")
         detailed['End'] = detailed['End'].apply(lambda x: f"{x:02d}:00")
         st.dataframe(detailed, use_container_width=True)
 
-    # Сводка по сотрудникам
     st.subheader("Сводка по сотрудникам")
     if assigned > 0:
         emp_stats = shifts[shifts['Employee'] != ''].groupby('Employee').agg(
@@ -147,7 +141,6 @@ if 'selected_analytics' in st.session_state:
     else:
         st.info("Нет назначенных сотрудников")
 
-    # Кнопка удаления всего набора прямо из аналитики
     if st.button("🗑️ Удалить этот набор", use_container_width=True, type="primary"):
         delete_import(import_id, published=True)
         st.session_state.pop('selected_analytics')
