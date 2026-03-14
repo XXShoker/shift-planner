@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import uuid
 import time
+import base64
 from datetime import datetime
 from github import Github, GithubException
 
@@ -28,23 +29,32 @@ def get_repo():
         return None
 
 def commit_file(repo, file_path, message, content_bytes, max_retries=3):
+    """
+    Коммитит файл в репозиторий с повторными попытками при конфликте SHA.
+    Перед каждой попыткой получает актуальный SHA.
+    """
     for attempt in range(max_retries):
         try:
+            # Всегда пытаемся получить актуальные данные файла
             try:
                 contents = repo.get_contents(file_path, ref="main")
                 current_sha = contents.sha
                 repo.update_file(contents.path, message, content_bytes, current_sha, branch="main")
             except GithubException as e:
                 if e.status == 404:
+                    # Файла нет — создаём
                     repo.create_file(file_path, message, content_bytes, branch="main")
                 else:
                     raise
-            return
+            return  # Успех
         except GithubException as e:
             if e.status == 409 and attempt < max_retries - 1:
+                # Конфликт — ждём и пробуем снова
                 time.sleep(1 * (2 ** attempt))
                 continue
             else:
+                # Если после всех попыток ошибка, логируем и пробрасываем
+                print(f"GitHub error after {attempt+1} attempts: {e}")
                 raise
 
 def save_file_locally(relative_path, content_bytes):
@@ -82,7 +92,6 @@ def get_published_metadata():
     if repo:
         try:
             contents = repo.get_contents("data/published_metadata.json", ref="main")
-            import base64
             content = base64.b64decode(contents.content).decode("utf-8")
             metadata = json.loads(content)
             # Сохраняем локально для кэша
@@ -97,6 +106,24 @@ def save_published_metadata(metadata):
     save_json_local(PUBLISHED_METADATA_FILE, metadata)
     content = json.dumps(metadata, indent=2, ensure_ascii=False).encode("utf-8")
     save_file_to_github("data/published_metadata.json", content, "Update published metadata")
+
+def refresh_published_metadata():
+    """Принудительно загружает published_metadata.json из GitHub, обновляя локальную копию."""
+    repo = get_repo()
+    if not repo:
+        return False
+    try:
+        contents = repo.get_contents("data/published_metadata.json", ref="main")
+        content = base64.b64decode(contents.content).decode("utf-8")
+        metadata = json.loads(content)
+        save_json_local(PUBLISHED_METADATA_FILE, metadata)
+        return True
+    except GithubException as e:
+        if e.status == 404:
+            # Файла нет в GitHub — создаём пустой локально
+            save_json_local(PUBLISHED_METADATA_FILE, [])
+            return True
+        return False
 
 def generate_import_id():
     return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
@@ -127,7 +154,6 @@ def load_shifts(import_id, with_assignments=False, published=False):
         if repo:
             try:
                 contents = repo.get_contents(f"data/shifts/{import_id}.csv", ref="main")
-                import base64
                 csv_content = base64.b64decode(contents.content)
                 with open(csv_path, "wb") as f:
                     f.write(csv_content)
@@ -158,7 +184,6 @@ def load_shifts(import_id, with_assignments=False, published=False):
             if repo:
                 try:
                     contents = repo.get_contents(f"data/assignments/{import_id}.json", ref="main")
-                    import base64
                     assign_content = base64.b64decode(contents.content)
                     with open(assign_path, "wb") as f:
                         f.write(assign_content)
