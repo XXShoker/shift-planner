@@ -20,7 +20,7 @@ selected_label = st.selectbox("Выберите набор смен", list(optio
 selected_import_id = options[selected_label]
 
 # Загружаем смены с уже сохранёнными назначениями
-shifts_df = load_shifts(selected_import_id, with_assignments=True)
+shifts_df = load_shifts(selected_import_id, with_assignments=True, published=True)
 if shifts_df is None:
     st.error("Ошибка загрузки данных")
     st.stop()
@@ -124,7 +124,7 @@ with col_main:
         else:
             shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = selected
             st.toast(f"✅ Смена {shift_id} → {selected}")
-        save_assignments(selected_import_id, shifts_df)
+        save_assignments(selected_import_id, shifts_df, published=True)
         st.rerun()
 
     current_date = None
@@ -155,7 +155,7 @@ with col_main:
     if st.button("🗑️ Очистить назначения на эту неделю", use_container_width=True):
         mask = shifts_df['Date'].isin(week_dates)
         shifts_df.loc[mask, 'Employee'] = ''
-        save_assignments(selected_import_id, shifts_df)
+        save_assignments(selected_import_id, shifts_df, published=True)
         st.rerun()
 
 # --- Визуализация Gantt ---
