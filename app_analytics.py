@@ -8,7 +8,8 @@ from data_manager import (
     load_shifts,
     publish_import,
     delete_import,
-    refresh_published_metadata
+    refresh_published_metadata,
+    cleanup_drafts  # добавлено
 )
 
 st.set_page_config(layout="wide")
@@ -46,6 +47,17 @@ with col2:
             st.rerun()
         else:
             st.error("Ошибка синхронизации")
+
+# Кнопка очистки битых черновиков
+col1, col2, col3 = st.columns(3)
+with col1:
+    if st.button("🧹 Очистить битые черновики", use_container_width=True):
+        removed = cleanup_drafts()
+        if removed > 0:
+            st.success(f"Удалено {removed} битых записей")
+        else:
+            st.info("Битых записей не найдено")
+        st.rerun()
 
 # Получаем черновики (локально) и опубликованные (из GitHub, всегда свежие)
 drafts = get_drafts_metadata()
