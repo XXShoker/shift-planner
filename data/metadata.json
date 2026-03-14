@@ -1,12 +1,5 @@
 [
   {
-    "import_id": "20260314_052100_29831bbb",
-    "filename": "20260314_052100_29831bbb.csv",
-    "uploaded_at": "2026-03-14T05:21:01.409348",
-    "status": "draft",
-    "description": ""
-  },
-  {
     "import_id": "20260314_052105_10e82968",
     "filename": "20260314_052105_10e82968.csv",
     "uploaded_at": "2026-03-14T05:21:06.873612",
@@ -24,13 +17,6 @@
     "import_id": "20260314_052201_d82bb9a8",
     "filename": "20260314_052201_d82bb9a8.csv",
     "uploaded_at": "2026-03-14T05:22:02.853248",
-    "status": "draft",
-    "description": ""
-  },
-  {
-    "import_id": "20260314_052814_5cd992fc",
-    "filename": "20260314_052814_5cd992fc.csv",
-    "uploaded_at": "2026-03-14T05:28:15.710209",
     "status": "draft",
     "description": ""
   }
