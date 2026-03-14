@@ -29,33 +29,45 @@ def get_repo():
         return None
 
 def commit_file(repo, file_path, message, content_bytes, max_retries=3):
-    """
-    Коммитит файл в репозиторий с повторными попытками при конфликте SHA.
-    Перед каждой попыткой получает актуальный SHA.
-    """
+    """Коммитит файл с повторными попытками и актуальным SHA."""
     for attempt in range(max_retries):
         try:
-            # Всегда пытаемся получить актуальные данные файла
             try:
                 contents = repo.get_contents(file_path, ref="main")
                 current_sha = contents.sha
                 repo.update_file(contents.path, message, content_bytes, current_sha, branch="main")
             except GithubException as e:
                 if e.status == 404:
-                    # Файла нет — создаём
                     repo.create_file(file_path, message, content_bytes, branch="main")
                 else:
                     raise
-            return  # Успех
+            return
         except GithubException as e:
             if e.status == 409 and attempt < max_retries - 1:
-                # Конфликт — ждём и пробуем снова
                 time.sleep(1 * (2 ** attempt))
                 continue
             else:
-                # Если после всех попыток ошибка, логируем и пробрасываем
                 print(f"GitHub error after {attempt+1} attempts: {e}")
                 raise
+
+def delete_file_from_github(repo, file_path, message, max_retries=3):
+    """Удаляет файл из GitHub, предварительно получая актуальный SHA."""
+    for attempt in range(max_retries):
+        try:
+            contents = repo.get_contents(file_path, ref="main")
+            repo.delete_file(contents.path, message, contents.sha, branch="main")
+            return True
+        except GithubException as e:
+            if e.status == 404:
+                # Файла уже нет — считаем успехом
+                return True
+            if e.status == 409 and attempt < max_retries - 1:
+                time.sleep(1 * (2 ** attempt))
+                continue
+            else:
+                print(f"GitHub delete error after {attempt+1} attempts: {e}")
+                return False
+    return False
 
 def save_file_locally(relative_path, content_bytes):
     full_path = os.path.join(DATA_DIR, relative_path)
@@ -84,52 +96,48 @@ def get_drafts_metadata():
 def save_drafts_metadata(metadata):
     save_json_local(DRAFTS_METADATA_FILE, metadata)
 
-def get_published_metadata():
-    # Сначала пробуем локально, если нет — загружаем из GitHub
-    if os.path.exists(PUBLISHED_METADATA_FILE):
+def get_published_metadata(force_refresh=False):
+    """
+    Возвращает опубликованные метаданные.
+    Если force_refresh=True, игнорирует локальный кэш и загружает из GitHub.
+    """
+    if not force_refresh and os.path.exists(PUBLISHED_METADATA_FILE):
         return load_json_local(PUBLISHED_METADATA_FILE)
+
     repo = get_repo()
     if repo:
         try:
             contents = repo.get_contents("data/published_metadata.json", ref="main")
             content = base64.b64decode(contents.content).decode("utf-8")
             metadata = json.loads(content)
-            # Сохраняем локально для кэша
             save_json_local(PUBLISHED_METADATA_FILE, metadata)
             return metadata
-        except:
-            return []
-    return []
+        except GithubException as e:
+            if e.status == 404:
+                # Файла нет в GitHub — создаём пустой локально
+                save_json_local(PUBLISHED_METADATA_FILE, [])
+                return []
+            else:
+                # Другая ошибка — возвращаем локальный кэш, если есть
+                if os.path.exists(PUBLISHED_METADATA_FILE):
+                    return load_json_local(PUBLISHED_METADATA_FILE)
+                return []
+    # Если нет доступа к GitHub, возвращаем локальный кэш
+    return load_json_local(PUBLISHED_METADATA_FILE) if os.path.exists(PUBLISHED_METADATA_FILE) else []
 
 def save_published_metadata(metadata):
-    # Сохраняем локально и в GitHub
     save_json_local(PUBLISHED_METADATA_FILE, metadata)
     content = json.dumps(metadata, indent=2, ensure_ascii=False).encode("utf-8")
     save_file_to_github("data/published_metadata.json", content, "Update published metadata")
 
 def refresh_published_metadata():
-    """Принудительно загружает published_metadata.json из GitHub, обновляя локальную копию."""
-    repo = get_repo()
-    if not repo:
-        return False
-    try:
-        contents = repo.get_contents("data/published_metadata.json", ref="main")
-        content = base64.b64decode(contents.content).decode("utf-8")
-        metadata = json.loads(content)
-        save_json_local(PUBLISHED_METADATA_FILE, metadata)
-        return True
-    except GithubException as e:
-        if e.status == 404:
-            # Файла нет в GitHub — создаём пустой локально
-            save_json_local(PUBLISHED_METADATA_FILE, [])
-            return True
-        return False
+    """Принудительно синхронизирует локальный кэш с GitHub."""
+    return get_published_metadata(force_refresh=True)
 
 def generate_import_id():
     return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
 
 def save_uploaded_shifts(import_id, df_analytics):
-    """Сохраняет черновик локально, без GitHub."""
     csv_content = df_analytics.to_csv(sep=';', index=False).encode("utf-8")
     save_file_locally(f"shifts/{import_id}.csv", csv_content)
     metadata = get_drafts_metadata()
@@ -143,13 +151,8 @@ def save_uploaded_shifts(import_id, df_analytics):
     save_drafts_metadata(metadata)
 
 def load_shifts(import_id, with_assignments=False, published=False):
-    """
-    Загружает смены. Если published=True, сначала пробует локально,
-    если нет — тянет из GitHub.
-    """
     csv_path = os.path.join(SHIFTS_DIR, f"{import_id}.csv")
     if not os.path.exists(csv_path) and published:
-        # Скачиваем из GitHub
         repo = get_repo()
         if repo:
             try:
@@ -197,7 +200,6 @@ def load_shifts(import_id, with_assignments=False, published=False):
     return shifts_df
 
 def save_assignments(import_id, shifts_df, published=False):
-    """Сохраняет назначения. Если published=True, коммитит в GitHub."""
     assignments = {}
     for _, row in shifts_df.iterrows():
         if row['Employee']:
@@ -208,68 +210,53 @@ def save_assignments(import_id, shifts_df, published=False):
         save_file_to_github(f"data/assignments/{import_id}.json", content, f"Update assignments {import_id}")
 
 def get_published_imports():
-    """Возвращает список опубликованных наборов."""
-    return get_published_metadata()
+    """Возвращает список опубликованных наборов (без кэша)."""
+    return get_published_metadata(force_refresh=True)
 
 def get_draft_imports():
-    """Возвращает список черновиков."""
     return get_drafts_metadata()
 
 def publish_import(import_id):
-    """Публикует черновик: копирует файлы в GitHub, обновляет метаданные."""
     drafts = get_drafts_metadata()
     draft = next((item for item in drafts if item['import_id'] == import_id), None)
     if not draft:
         return False
 
-    # Сохраняем CSV в GitHub
     csv_path = os.path.join(SHIFTS_DIR, f"{import_id}.csv")
     if os.path.exists(csv_path):
         with open(csv_path, "rb") as f:
             csv_content = f.read()
         save_file_to_github(f"data/shifts/{import_id}.csv", csv_content, f"Publish shifts {import_id}")
 
-    # Сохраняем назначения, если есть
     assign_path = os.path.join(ASSIGNMENTS_DIR, f"{import_id}.json")
     if os.path.exists(assign_path):
         with open(assign_path, "rb") as f:
             assign_content = f.read()
         save_file_to_github(f"data/assignments/{import_id}.json", assign_content, f"Publish assignments {import_id}")
 
-    # Обновляем опубликованные метаданные
-    published = get_published_metadata()
+    published = get_published_metadata(force_refresh=True)
     draft['status'] = 'published'
     published.append(draft)
     save_published_metadata(published)
 
-    # Удаляем из черновиков
     drafts = [item for item in drafts if item['import_id'] != import_id]
     save_drafts_metadata(drafts)
-
     return True
 
 def delete_import(import_id, published=False):
-    """Удаляет набор. Если published=True, удаляет из GitHub."""
+    """Удаляет набор. Если published=True, удаляет из GitHub (если файлы существуют)."""
     if published:
-        # Удаляем из GitHub
         repo = get_repo()
         if repo:
-            try:
-                contents = repo.get_contents(f"data/shifts/{import_id}.csv", ref="main")
-                repo.delete_file(contents.path, f"Delete shifts {import_id}", contents.sha, branch="main")
-            except:
-                pass
-            try:
-                contents = repo.get_contents(f"data/assignments/{import_id}.json", ref="main")
-                repo.delete_file(contents.path, f"Delete assignments {import_id}", contents.sha, branch="main")
-            except:
-                pass
-        # Удаляем из опубликованных метаданных
-        published_meta = get_published_metadata()
+            # Удаляем файлы из GitHub, игнорируем ошибки, если файлов уже нет
+            delete_file_from_github(repo, f"data/shifts/{import_id}.csv", f"Delete shifts {import_id}")
+            delete_file_from_github(repo, f"data/assignments/{import_id}.json", f"Delete assignments {import_id}")
+
+        # Обновляем метаданные: удаляем запись из опубликованных
+        published_meta = get_published_metadata(force_refresh=True)
         published_meta = [item for item in published_meta if item['import_id'] != import_id]
         save_published_metadata(published_meta)
     else:
-        # Удаляем из черновиков
         drafts = get_drafts_metadata()
         drafts = [item for item in drafts if item['import_id'] != import_id]
         save_drafts_metadata(drafts)
