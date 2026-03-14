@@ -29,7 +29,6 @@ def get_repo():
         return None
 
 def commit_file(repo, file_path, message, content_bytes, max_retries=3):
-    """Коммитит файл с повторными попытками и актуальным SHA."""
     for attempt in range(max_retries):
         try:
             try:
@@ -51,7 +50,6 @@ def commit_file(repo, file_path, message, content_bytes, max_retries=3):
                 raise
 
 def delete_file_from_github(repo, file_path, message, max_retries=3):
-    """Удаляет файл из GitHub, предварительно получая актуальный SHA."""
     for attempt in range(max_retries):
         try:
             contents = repo.get_contents(file_path, ref="main")
@@ -59,7 +57,6 @@ def delete_file_from_github(repo, file_path, message, max_retries=3):
             return True
         except GithubException as e:
             if e.status == 404:
-                # Файла уже нет — считаем успехом
                 return True
             if e.status == 409 and attempt < max_retries - 1:
                 time.sleep(1 * (2 ** attempt))
@@ -97,10 +94,6 @@ def save_drafts_metadata(metadata):
     save_json_local(DRAFTS_METADATA_FILE, metadata)
 
 def get_published_metadata(force_refresh=False):
-    """
-    Возвращает опубликованные метаданные.
-    Если force_refresh=True, игнорирует локальный кэш и загружает из GitHub.
-    """
     if not force_refresh and os.path.exists(PUBLISHED_METADATA_FILE):
         return load_json_local(PUBLISHED_METADATA_FILE)
 
@@ -114,15 +107,12 @@ def get_published_metadata(force_refresh=False):
             return metadata
         except GithubException as e:
             if e.status == 404:
-                # Файла нет в GitHub — создаём пустой локально
                 save_json_local(PUBLISHED_METADATA_FILE, [])
                 return []
             else:
-                # Другая ошибка — возвращаем локальный кэш, если есть
                 if os.path.exists(PUBLISHED_METADATA_FILE):
                     return load_json_local(PUBLISHED_METADATA_FILE)
                 return []
-    # Если нет доступа к GitHub, возвращаем локальный кэш
     return load_json_local(PUBLISHED_METADATA_FILE) if os.path.exists(PUBLISHED_METADATA_FILE) else []
 
 def save_published_metadata(metadata):
@@ -131,7 +121,6 @@ def save_published_metadata(metadata):
     save_file_to_github("data/published_metadata.json", content, "Update published metadata")
 
 def refresh_published_metadata():
-    """Принудительно синхронизирует локальный кэш с GitHub."""
     return get_published_metadata(force_refresh=True)
 
 def generate_import_id():
@@ -210,7 +199,6 @@ def save_assignments(import_id, shifts_df, published=False):
         save_file_to_github(f"data/assignments/{import_id}.json", content, f"Update assignments {import_id}")
 
 def get_published_imports():
-    """Возвращает список опубликованных наборов (без кэша)."""
     return get_published_metadata(force_refresh=True)
 
 def get_draft_imports():
@@ -244,8 +232,6 @@ def publish_import(import_id):
     return True
 
 def delete_import(import_id, published=False):
-    """Удаляет набор. Если published=True, удаляет из GitHub (если файлы существуют)."""
-    # Удаляем локальные файлы, если они есть
     csv_path = os.path.join(SHIFTS_DIR, f"{import_id}.csv")
     if os.path.exists(csv_path):
         try:
@@ -266,21 +252,15 @@ def delete_import(import_id, published=False):
             delete_file_from_github(repo, f"data/shifts/{import_id}.csv", f"Delete shifts {import_id}")
             delete_file_from_github(repo, f"data/assignments/{import_id}.json", f"Delete assignments {import_id}")
 
-        # Обновляем опубликованные метаданные
         published_meta = get_published_metadata(force_refresh=True)
         published_meta = [item for item in published_meta if item['import_id'] != import_id]
         save_published_metadata(published_meta)
     else:
-        # Удаляем из черновиков
         drafts = get_drafts_metadata()
         drafts = [item for item in drafts if item['import_id'] != import_id]
         save_drafts_metadata(drafts)
 
 def cleanup_drafts():
-    """
-    Удаляет из drafts_metadata.json записи, для которых нет соответствующего CSV-файла.
-    Возвращает количество удалённых записей.
-    """
     drafts = get_drafts_metadata()
     valid_drafts = []
     removed_count = 0
