@@ -245,26 +245,51 @@ def publish_import(import_id):
 
 def delete_import(import_id, published=False):
     """Удаляет набор. Если published=True, удаляет из GitHub (если файлы существуют)."""
+    # Удаляем локальные файлы, если они есть
+    csv_path = os.path.join(SHIFTS_DIR, f"{import_id}.csv")
+    if os.path.exists(csv_path):
+        try:
+            os.remove(csv_path)
+        except Exception as e:
+            print(f"Error deleting local CSV {csv_path}: {e}")
+
+    assign_path = os.path.join(ASSIGNMENTS_DIR, f"{import_id}.json")
+    if os.path.exists(assign_path):
+        try:
+            os.remove(assign_path)
+        except Exception as e:
+            print(f"Error deleting local assignments {assign_path}: {e}")
+
     if published:
         repo = get_repo()
         if repo:
-            # Удаляем файлы из GitHub, игнорируем ошибки, если файлов уже нет
             delete_file_from_github(repo, f"data/shifts/{import_id}.csv", f"Delete shifts {import_id}")
             delete_file_from_github(repo, f"data/assignments/{import_id}.json", f"Delete assignments {import_id}")
 
-        # Обновляем метаданные: удаляем запись из опубликованных
+        # Обновляем опубликованные метаданные
         published_meta = get_published_metadata(force_refresh=True)
         published_meta = [item for item in published_meta if item['import_id'] != import_id]
         save_published_metadata(published_meta)
     else:
+        # Удаляем из черновиков
         drafts = get_drafts_metadata()
         drafts = [item for item in drafts if item['import_id'] != import_id]
         save_drafts_metadata(drafts)
 
-    # Удаляем локальные файлы
-    csv_path = os.path.join(SHIFTS_DIR, f"{import_id}.csv")
-    if os.path.exists(csv_path):
-        os.remove(csv_path)
-    assign_path = os.path.join(ASSIGNMENTS_DIR, f"{import_id}.json")
-    if os.path.exists(assign_path):
-        os.remove(assign_path)
+def cleanup_drafts():
+    """
+    Удаляет из drafts_metadata.json записи, для которых нет соответствующего CSV-файла.
+    Возвращает количество удалённых записей.
+    """
+    drafts = get_drafts_metadata()
+    valid_drafts = []
+    removed_count = 0
+    for draft in drafts:
+        csv_path = os.path.join(SHIFTS_DIR, f"{draft['import_id']}.csv")
+        if os.path.exists(csv_path):
+            valid_drafts.append(draft)
+        else:
+            removed_count += 1
+    if removed_count > 0:
+        save_drafts_metadata(valid_drafts)
+    return removed_count
