@@ -65,33 +65,47 @@ for item in filtered:
 if 'selected_analytics' in st.session_state:
     import_id = st.session_state['selected_analytics']
     st.markdown("---")
-    st.subheader(f"Аналитика для ID: {import_id}")
-    
+    st.subheader(f"Аналитика для набора: {import_id}")
+
+    # Загружаем смены с назначениями
     shifts = load_shifts(import_id, with_assignments=True)
     if shifts is None:
         st.error("Данные не найдены")
         st.session_state.pop('selected_analytics')
         st.rerun()
-    
+
+    # Статистика
     total = len(shifts)
     assigned = len(shifts[shifts['Employee'] != ''])
     free = total - assigned
     total_hours = shifts['Duration'].sum()
     assigned_hours = shifts[shifts['Employee'] != '']['Duration'].sum()
-    
+
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Всего смен", total)
     col2.metric("Назначено", assigned)
     col3.metric("Свободно", free)
     col4.metric("Всего часов", total_hours)
     st.metric("Часов назначено", assigned_hours)
-    
-    st.subheader("Детальная таблица")
-    display = shifts[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
-    display['Start'] = display['Start'].apply(lambda x: f"{x:02d}:00")
-    display['End'] = display['End'].apply(lambda x: f"{x:02d}:00")
-    st.dataframe(display, use_container_width=True)
-    
+
+    # Группированная таблица (исходные строки из CSV + сводка по сотрудникам)
+    st.subheader("Сводка по исходным сменам (сгруппировано)")
+    grouped = shifts.groupby(['Date', 'Start', 'Duration']).agg(
+        Всего_смен=('shift_id', 'count'),
+        Назначено=('Employee', lambda x: (x != '').sum()),
+        Сотрудники=('Employee', lambda x: ', '.join([e for e in x if e != '']) if any(x != '') else '—')
+    ).reset_index()
+    grouped['Свободно'] = grouped['Всего_смен'] - grouped['Назначено']
+    st.dataframe(grouped, use_container_width=True)
+
+    # Детальная таблица (по желанию, можно свернуть)
+    with st.expander("Показать детальную таблицу всех смен"):
+        detailed = shifts[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
+        detailed['Start'] = detailed['Start'].apply(lambda x: f"{x:02d}:00")
+        detailed['End'] = detailed['End'].apply(lambda x: f"{x:02d}:00")
+        st.dataframe(detailed, use_container_width=True)
+
+    # Сводка по сотрудникам
     st.subheader("Сводка по сотрудникам")
     if assigned > 0:
         emp_stats = shifts[shifts['Employee'] != ''].groupby('Employee').agg(
@@ -101,7 +115,13 @@ if 'selected_analytics' in st.session_state:
         st.dataframe(emp_stats, use_container_width=True)
     else:
         st.info("Нет назначенных сотрудников")
-    
+
+    # Кнопка удаления всего набора прямо из аналитики
+    if st.button("🗑️ Удалить этот набор", use_container_width=True, type="primary"):
+        delete_import(import_id)
+        st.session_state.pop('selected_analytics')
+        st.rerun()
+
     if st.button("Закрыть аналитику"):
         st.session_state.pop('selected_analytics')
         st.rerun()
