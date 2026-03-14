@@ -15,24 +15,46 @@ from data_manager import (
 st.set_page_config(layout="wide")
 st.title("📊 Shift Planner – Аналитика")
 
+# --- Инициализация состояния для контроля повторной загрузки ---
+if 'last_uploaded_name' not in st.session_state:
+    st.session_state.last_uploaded_name = None
+if 'upload_processed' not in st.session_state:
+    st.session_state.upload_processed = False
+
+# --- Отладка: покажем состояние ---
+st.sidebar.write("**Отладка**")
+st.sidebar.write(f"last_uploaded_name: {st.session_state.last_uploaded_name}")
+st.sidebar.write(f"upload_processed: {st.session_state.upload_processed}")
+
 # --- Загрузка нового файла ---
 st.header("📁 Загрузить новый файл смен")
 with st.expander("Требуемый формат CSV (разделитель ;)"):
     st.code("Date;Start;Duration;Count\n2024-01-15;9;8;2")
 
-uploaded = st.file_uploader("Выберите CSV файл", type="csv")
-if uploaded:
-    try:
-        df = pd.read_csv(uploaded, delimiter=';')
-        if set(df.columns) >= {'Date', 'Start', 'Duration', 'Count'}:
-            import_id = generate_import_id()
-            save_uploaded_shifts(import_id, df)
-            st.success(f"Файл загружен. ID: {import_id}")
-            st.rerun()
-        else:
-            st.error("Неверный формат. Нужны колонки: Date, Start, Duration, Count")
-    except Exception as e:
-        st.error(f"Ошибка чтения: {e}")
+uploaded = st.file_uploader("Выберите CSV файл", type="csv", key="file_uploader")
+
+if uploaded is not None:
+    # Если имя файла изменилось, сбрасываем флаг обработки
+    if uploaded.name != st.session_state.last_uploaded_name:
+        st.session_state.last_uploaded_name = uploaded.name
+        st.session_state.upload_processed = False
+
+    # Если ещё не обрабатывали этот файл
+    if not st.session_state.upload_processed:
+        try:
+            df = pd.read_csv(uploaded, delimiter=';')
+            if set(df.columns) >= {'Date', 'Start', 'Duration', 'Count'}:
+                import_id = generate_import_id()
+                save_uploaded_shifts(import_id, df)
+                st.success(f"✅ Файл загружен. ID: {import_id}")
+                st.session_state.upload_processed = True
+                # НЕ вызываем st.rerun() – просто показываем сообщение
+            else:
+                st.error("❌ Неверный формат. Нужны колонки: Date, Start, Duration, Count")
+        except Exception as e:
+            st.error(f"❌ Ошибка чтения: {e}")
+    else:
+        st.info(f"Файл {uploaded.name} уже загружен. Если хотите загрузить другой, удалите текущий или обновите страницу.")
 
 # --- Список загруженных файлов ---
 st.markdown("---")
@@ -42,11 +64,13 @@ st.header("📋 Управление загруженными сменами")
 col1, col2 = st.columns([3, 1])
 with col2:
     if st.button("🔄 Синхронизировать с GitHub", use_container_width=True):
-        if refresh_published_metadata():
+        with st.spinner("Синхронизация..."):
+            success = refresh_published_metadata()
+        if success:
             st.success("Метаданные синхронизированы")
             st.rerun()
         else:
-            st.error("Ошибка синхронизации")
+            st.error("Ошибка синхронизации (возможно, нет доступа к GitHub)")
 
 # Кнопка очистки битых черновиков
 col1, col2, col3 = st.columns(3)
@@ -79,8 +103,13 @@ for item in filtered:
 
         if item['status'] == 'draft':
             if col4.button("📢 Опубликовать", key=f"pub_{item['import_id']}"):
-                publish_import(item['import_id'])
-                st.rerun()
+                with st.spinner("Публикация..."):
+                    success = publish_import(item['import_id'])
+                if success:
+                    st.success("Опубликовано")
+                    st.rerun()
+                else:
+                    st.error("Ошибка публикации")
             if col5.button("🗑️ Удалить", key=f"del_{item['import_id']}"):
                 delete_import(item['import_id'], published=False)
                 st.rerun()
