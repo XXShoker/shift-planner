@@ -29,6 +29,7 @@ def get_repo():
         return None
 
 def commit_file(repo, file_path, message, content_bytes, max_retries=3):
+    """Коммитит файл с повторными попытками и актуальным SHA."""
     for attempt in range(max_retries):
         try:
             try:
@@ -50,6 +51,7 @@ def commit_file(repo, file_path, message, content_bytes, max_retries=3):
                 raise
 
 def delete_file_from_github(repo, file_path, message, max_retries=3):
+    """Удаляет файл из GitHub, предварительно получая актуальный SHA."""
     for attempt in range(max_retries):
         try:
             contents = repo.get_contents(file_path, ref="main")
@@ -94,6 +96,10 @@ def save_drafts_metadata(metadata):
     save_json_local(DRAFTS_METADATA_FILE, metadata)
 
 def get_published_metadata(force_refresh=False):
+    """
+    Возвращает опубликованные метаданные.
+    Если force_refresh=True, игнорирует локальный кэш и загружает из GitHub.
+    """
     if not force_refresh and os.path.exists(PUBLISHED_METADATA_FILE):
         return load_json_local(PUBLISHED_METADATA_FILE)
 
@@ -121,6 +127,7 @@ def save_published_metadata(metadata):
     save_file_to_github("data/published_metadata.json", content, "Update published metadata")
 
 def refresh_published_metadata():
+    """Принудительно синхронизирует локальный кэш с GitHub."""
     return get_published_metadata(force_refresh=True)
 
 def generate_import_id():
