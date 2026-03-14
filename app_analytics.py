@@ -2,11 +2,8 @@ import streamlit as st
 import pandas as pd
 from data_manager import (
     get_metadata, save_uploaded_shifts, generate_import_id,
-    load_shifts, publish_import, delete_import, save_assignments,
-    ASSIGNMENTS_DIR, SHIFTS_DIR
+    load_shifts, publish_import, delete_import
 )
-import os
-import json
 
 st.set_page_config(layout="wide")
 st.title("📊 Shift Planner – Аналитика")
@@ -18,12 +15,9 @@ with st.expander("Требуемый формат CSV (разделитель ;)
 
 uploaded = st.file_uploader("Выберите CSV файл", type="csv")
 if uploaded:
-    # Парсим, проверяем
     try:
         df = pd.read_csv(uploaded, delimiter=';')
-        # Простейшая проверка колонок
         if set(df.columns) >= {'Date', 'Start', 'Duration', 'Count'}:
-            # Генерируем import_id
             import_id = generate_import_id()
             save_uploaded_shifts(import_id, df)
             st.success(f"Файл загружен. ID: {import_id}")
@@ -42,12 +36,8 @@ if not metadata:
     st.info("Пока нет загруженных файлов.")
     st.stop()
 
-# Фильтр по статусу
 status_filter = st.selectbox("Статус", ["Все", "draft", "published"])
-if status_filter != "Все":
-    filtered = [m for m in metadata if m['status'] == status_filter]
-else:
-    filtered = metadata
+filtered = [m for m in metadata if status_filter == "Все" or m['status'] == status_filter]
 
 for item in filtered:
     with st.container(border=True):
@@ -56,7 +46,6 @@ for item in filtered:
         col2.write(f"📅 {item['uploaded_at'][:10]}")
         col3.write(f"Статус: **{item['status']}**")
         
-        # Кнопки действий
         if item['status'] == 'draft':
             if col4.button("📢 Опубликовать", key=f"pub_{item['import_id']}"):
                 publish_import(item['import_id'])
@@ -65,7 +54,6 @@ for item in filtered:
                 delete_import(item['import_id'])
                 st.rerun()
         else:  # published
-            # Можно посмотреть аналитику по назначениям
             if col4.button("📊 Аналитика", key=f"anal_{item['import_id']}"):
                 st.session_state['selected_analytics'] = item['import_id']
                 st.rerun()
@@ -79,14 +67,12 @@ if 'selected_analytics' in st.session_state:
     st.markdown("---")
     st.subheader(f"Аналитика для ID: {import_id}")
     
-    # Загружаем смены с назначениями
     shifts = load_shifts(import_id, with_assignments=True)
     if shifts is None:
         st.error("Данные не найдены")
         st.session_state.pop('selected_analytics')
         st.rerun()
     
-    # Статистика
     total = len(shifts)
     assigned = len(shifts[shifts['Employee'] != ''])
     free = total - assigned
@@ -98,17 +84,14 @@ if 'selected_analytics' in st.session_state:
     col2.metric("Назначено", assigned)
     col3.metric("Свободно", free)
     col4.metric("Всего часов", total_hours)
-    
     st.metric("Часов назначено", assigned_hours)
     
-    # Таблица всех смен
     st.subheader("Детальная таблица")
     display = shifts[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
     display['Start'] = display['Start'].apply(lambda x: f"{x:02d}:00")
     display['End'] = display['End'].apply(lambda x: f"{x:02d}:00")
     st.dataframe(display, use_container_width=True)
     
-    # Сводка по сотрудникам
     st.subheader("Сводка по сотрудникам")
     if assigned > 0:
         emp_stats = shifts[shifts['Employee'] != ''].groupby('Employee').agg(
