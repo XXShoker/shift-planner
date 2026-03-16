@@ -291,23 +291,23 @@ with tab1:
     }).reset_index()
     grouped['Count'] = week_shifts.groupby(['Date','Start','Duration']).size().values
     grouped['Employee'] = grouped['Employee'].replace('', 'не назначены')
-    st.dataframe(grouped)
+    st.dataframe(grouped, width='stretch')
     csv = grouped.to_csv(index=False, sep=';')
-    st.download_button("Скачать неделю", csv, "week_schedule.csv")
+    st.download_button("Скачать неделю", csv, "week_schedule.csv", width='stretch')
 
 with tab2:
     all_disp = shifts_df[['Date','Start','End','Duration','Employee']].copy()
     all_disp['Start'] = all_disp['Start'].apply(lambda x: f"{x:02d}:00")
     all_disp['End'] = all_disp['End'].apply(lambda x: f"{x:02d}:00")
-    st.dataframe(all_disp)
+    st.dataframe(all_disp, width='stretch')
     csv_all = all_disp.to_csv(index=False, sep=';')
-    st.download_button("Скачать все смены", csv_all, "all_shifts.csv")
+    st.download_button("Скачать все смены", csv_all, "all_shifts.csv", width='stretch')
 
 with tab3:
     emp_sum = shifts_df[shifts_df['Employee'] != ''].groupby('Employee').agg(
         Смен=('shift_id','count'),
         Часов=('Duration','sum')
     ).reset_index()
-    st.dataframe(emp_sum)
+    st.dataframe(emp_sum, width='stretch')
     csv_emp = emp_sum.to_csv(index=False, sep=';')
-    st.download_button("Скачать статистику", csv_emp, "employee_stats.csv")
+    st.download_button("Скачать статистику", csv_emp, "employee_stats.csv", width='stretch')
