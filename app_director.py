@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -51,11 +52,18 @@ if shifts_df is None:
     st.error("Ошибка загрузки данных")
     st.stop()
 
+# Если пользователь директор, показываем только смены с его store
+if st.session_state.role == "director":
+    shifts_df = shifts_df[shifts_df['Store'] == st.session_state.store].copy()
+
 # Загружаем список исполнителей из name_store.csv
 employees_df = get_name_store()
 if st.session_state.role == "director":
     # Фильтруем только тех, у кого store совпадает с store директора
     employees_df = employees_df[employees_df['store'].astype(str) == st.session_state.store]
+
+# Сохраняем employees_df в сессии для использования в функциях обратного вызова
+st.session_state.employees_df = employees_df
 
 # Создаём список имён для выпадающего списка
 employee_names = [''] + sorted(employees_df['name'].unique().tolist())
@@ -78,6 +86,8 @@ if st.session_state.role == "admin":
                     new_row = pd.DataFrame({"name": [new_name], "store": [new_store]})
                     employees_df = pd.concat([employees_df, new_row], ignore_index=True)
                     save_name_store(employees_df)
+                    # Обновляем сессию
+                    st.session_state.employees_df = employees_df
                     st.success(f"Исполнитель {new_name} добавлен")
                     st.rerun()
             else:
@@ -91,7 +101,6 @@ if st.session_state.role == "admin":
             cola, colb, colc = st.columns([3, 1, 1])
             cola.write(f"**{row['name']}** (store: {row['store']})")
             if colb.button("✏️", key=f"edit_{idx}"):
-                # Здесь можно реализовать редактирование, но для простоты оставим только удаление
                 st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
             if colc.button("🗑️", key=f"del_{idx}"):
                 # Проверим, не назначен ли этот исполнитель на смены в текущем наборе
@@ -100,6 +109,7 @@ if st.session_state.role == "admin":
                 else:
                     employees_df = employees_df.drop(idx).reset_index(drop=True)
                     save_name_store(employees_df)
+                    st.session_state.employees_df = employees_df
                     st.rerun()
     else:
         st.info("Нет исполнителей")
@@ -160,6 +170,23 @@ def update_employee(shift_id):
         st.rerun()
         return
 
+    # Получаем информацию о смене
+    shift_row = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
+    shift_store = shift_row['Store']
+
+    # Проверяем, что выбранный сотрудник принадлежит нужному store (если не admin)
+    if st.session_state.role != "admin":
+        emp_store_row = st.session_state.employees_df[st.session_state.employees_df['name'] == selected]
+        if emp_store_row.empty:
+            st.error(f"Сотрудник {selected} не найден в базе")
+            st.session_state[f"sel_{shift_id}"] = ''
+            return
+        emp_store = str(emp_store_row.iloc[0]['store'])
+        if emp_store != shift_store:
+            st.error(f"Сотрудник {selected} принадлежит store {emp_store}, но смена требует store {shift_store}. Назначение невозможно.")
+            st.session_state[f"sel_{shift_id}"] = ''
+            return
+
     # Проверяем актуальные назначения из GitHub
     current_assignments = get_assignments_from_github(selected_import_id)
     if current_assignments is not None:
@@ -203,7 +230,7 @@ def update_employee(shift_id):
 current_date = None
 for _, row in week_shifts.iterrows():
     if row['Date'] != current_date:
-        st.markdown(f"### {row['Date']}")
+        st.markdown(f"### {row['Date']} (store: {row['Store']})")
         current_date = row['Date']
     
     current_employee = row['Employee']
@@ -296,7 +323,7 @@ with tab1:
     st.download_button("Скачать неделю", csv, "week_schedule.csv", width='stretch')
 
 with tab2:
-    all_disp = shifts_df[['Date','Start','End','Duration','Employee']].copy()
+    all_disp = shifts_df[['Date','Start','End','Duration','Employee','Store']].copy()
     all_disp['Start'] = all_disp['Start'].apply(lambda x: f"{x:02d}:00")
     all_disp['End'] = all_disp['End'].apply(lambda x: f"{x:02d}:00")
     st.dataframe(all_disp, width='stretch')
@@ -311,3 +338,4 @@ with tab3:
     st.dataframe(emp_sum, width='stretch')
     csv_emp = emp_sum.to_csv(index=False, sep=';')
     st.download_button("Скачать статистику", csv_emp, "employee_stats.csv", width='stretch')
+```
