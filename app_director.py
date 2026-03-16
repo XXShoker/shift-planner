@@ -55,6 +55,11 @@ if shifts_df is None:
 if st.session_state.role == "director":
     shifts_df = shifts_df[shifts_df['Store'] == st.session_state.store].copy()
 
+# Проверяем, есть ли смены после фильтрации
+if shifts_df.empty:
+    st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
+    st.stop()
+
 # Загружаем список исполнителей из name_store.csv
 employees_df = get_name_store()
 if st.session_state.role == "director":
