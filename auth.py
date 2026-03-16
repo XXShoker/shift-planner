@@ -1,6 +1,7 @@
 import streamlit as st
 import time
-from data_manager import get_name_store  # импортируем функцию, работающую с GitHub
+import os
+from data_manager import get_name_store
 
 def authenticate(login, password):
     """
