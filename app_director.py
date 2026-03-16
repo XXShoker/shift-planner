@@ -94,9 +94,9 @@ if st.session_state.role == "admin":
                 # Здесь можно реализовать редактирование, но для простоты оставим только удаление
                 st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
             if colc.button("🗑️", key=f"del_{idx}"):
-                # Проверим, не назначен ли этот исполнитель на какие-то смены
+                # Проверим, не назначен ли этот исполнитель на смены в текущем наборе
                 if row['name'] in shifts_df['Employee'].values:
-                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены. Сначала уберите его из всех смен.")
+                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены в этом наборе. Сначала уберите его из всех смен.")
                 else:
                     employees_df = employees_df.drop(idx).reset_index(drop=True)
                     save_name_store(employees_df)
@@ -160,14 +160,13 @@ def update_employee(shift_id):
         st.rerun()
         return
 
-    # Проверяем, не занята ли уже эта смена другим (актуальные данные из GitHub)
+    # Проверяем актуальные назначения из GitHub
     current_assignments = get_assignments_from_github(selected_import_id)
     if current_assignments is not None:
         str_shift_id = str(shift_id)
         if str_shift_id in current_assignments and current_assignments[str_shift_id] != '':
             # Конфликт: смена уже занята
-            st.error(f"⚠️ Смена {shift_id} уже занята сотрудником {current_assignments[str_shift_id]}. "
-                     f"Обновите страницу, чтобы увидеть актуальное состояние.")
+            st.error(f"⚠️ Смена {shift_id} уже занята сотрудником {current_assignments[str_shift_id]}. Обновите страницу.")
             # Сбрасываем selectbox
             st.session_state[f"sel_{shift_id}"] = ''
             st.rerun()
@@ -184,19 +183,43 @@ def update_employee(shift_id):
         st.session_state[f"sel_{shift_id}"] = ''
         return
 
+    # Повторная проверка перед сохранением (на случай, если состояние изменилось за время проверки)
+    current_assignments_final = get_assignments_from_github(selected_import_id)
+    if current_assignments_final is not None:
+        str_shift_id = str(shift_id)
+        if str_shift_id in current_assignments_final and current_assignments_final[str_shift_id] != '':
+            st.error(f"⚠️ Смена {shift_id} только что была занята. Попробуйте ещё раз.")
+            st.session_state[f"sel_{shift_id}"] = ''
+            st.rerun()
+            return
+
     # Всё хорошо, назначаем
     shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = selected
     st.toast(f"✅ Смена {shift_id} → {selected}")
     save_assignments(selected_import_id, shifts_df, published=True)
     st.rerun()
 
-# Отображение смен по дням
+# Отображение смен по дням с учётом доступности сотрудников
 current_date = None
 for _, row in week_shifts.iterrows():
     if row['Date'] != current_date:
         st.markdown(f"### {row['Date']}")
         current_date = row['Date']
-    cols = st.columns([2,2,4])
+    
+    current_employee = row['Employee']
+    
+    # Проверяем, есть ли текущий сотрудник в списке доступных для этого пользователя
+    if current_employee and current_employee not in employee_names:
+        # Смена занята сотрудником, недоступным для выбора
+        cols = st.columns([2, 2, 4])
+        cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
+        cols[1].write(f"({row['Duration']} ч)")
+        cols[2].info(f"👤 Занято: {current_employee}")
+        st.divider()
+        continue
+    
+    # Иначе показываем selectbox для назначения
+    cols = st.columns([2, 2, 4])
     cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
     cols[1].write(f"({row['Duration']} ч)")
     if employee_names:
