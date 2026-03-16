@@ -286,7 +286,7 @@ def cleanup_drafts():
     return removed_count
 
 # ---------- Работа с name_store.csv ----------
-NAME_STORE_PATH = "name_store.csv"
+NAME_STORE_PATH = os.path.join(DATA_DIR, "name_store.csv")
 
 def get_name_store():
     """Возвращает DataFrame с исполнителями (name, store)."""
