@@ -67,14 +67,13 @@ if st.session_state.role == "director":
         st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
         st.stop()
 
-# Загружаем список сотрудников из employees.csv
+# Загружаем список сотрудников из employees.csv (полный, для всех ролей)
 employees_df = get_employees()
 if st.session_state.role == "director":
     employees_df = employees_df[employees_df['store'].astype(str) == st.session_state.store]
 
-# Сохраняем employees_df в сессии для использования в функциях обратного вызова
+# Сохраняем полный employees_df в сессии для проверок в update_employee
 st.session_state.employees_df = employees_df
-employee_names = [''] + sorted(employees_df['name'].unique().tolist())
 
 # --- Раздел для администратора: управление сотрудниками (исполнителями) ---
 if st.session_state.role == "admin":
@@ -84,7 +83,6 @@ if st.session_state.role == "admin":
         with col1:
             new_name = st.text_input("Имя сотрудника")
         with col2:
-            # Выбор магазина по названию
             if store_names:
                 selected_store_name = st.selectbox("Магазин", store_names)
                 new_store = store_name_to_code[selected_store_name]
@@ -137,19 +135,24 @@ if st.session_state.role == "admin":
     # Создаем список кортежей (отображаемое имя, код)
     store_options = []
     for store_code in available_stores:
-        display_name = store_name_map.get(str(store_code), store_code)  # если нет названия, показываем код
+        display_name = store_name_map.get(str(store_code), store_code)
         store_options.append((display_name, store_code))
-    # Сортируем по отображаемому имени
     store_options.sort(key=lambda x: x[0])
-    # Для выпадающего списка используем отображаемое имя, значение храним как код
     selected_display = st.selectbox("Фильтр по магазину", ['Все'] + [name for name, code in store_options])
     if selected_display != 'Все':
         selected_store_code = next(code for name, code in store_options if name == selected_display)
         filtered_shifts_df = shifts_df[shifts_df['Store'] == selected_store_code].copy()
+        # Фильтруем сотрудников по выбранному магазину
+        filtered_employees_df = employees_df[employees_df['store'].astype(str) == selected_store_code].copy()
     else:
         filtered_shifts_df = shifts_df.copy()
+        filtered_employees_df = employees_df.copy()
 else:
     filtered_shifts_df = shifts_df.copy()
+    filtered_employees_df = employees_df.copy()  # для директора уже отфильтровано
+
+# Создаём список имён для выпадающего списка на основе отфильтрованных сотрудников
+filtered_employee_names = [''] + sorted(filtered_employees_df['name'].unique().tolist())
 
 # Выбор недели
 if filtered_shifts_df.empty:
@@ -209,7 +212,7 @@ def update_employee(shift_id):
     shift_row = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
     shift_store = shift_row['Store']
 
-    # Проверяем, что выбранный сотрудник принадлежит нужному store (для всех ролей)
+    # Проверяем, что выбранный сотрудник принадлежит нужному store (используем полный список из сессии)
     emp_store_row = st.session_state.employees_df[st.session_state.employees_df['name'] == selected]
     if emp_store_row.empty:
         st.error(f"Сотрудник {selected} не найден в базе")
@@ -260,14 +263,13 @@ def update_employee(shift_id):
 current_date = None
 for _, row in week_shifts.iterrows():
     if row['Date'] != current_date:
-        # Для администратора показываем также название магазина, если есть
         store_display = store_name_map.get(str(row['Store']), row['Store'])
         st.markdown(f"### {row['Date']} (store: {row['Store']} - {store_display})")
         current_date = row['Date']
     
     current_employee = row['Employee']
     
-    if current_employee and current_employee not in employee_names:
+    if current_employee and current_employee not in filtered_employee_names:
         cols = st.columns([2, 2, 4])
         cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
         cols[1].write(f"({row['Duration']} ч)")
@@ -278,12 +280,12 @@ for _, row in week_shifts.iterrows():
     cols = st.columns([2, 2, 4])
     cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
     cols[1].write(f"({row['Duration']} ч)")
-    if employee_names:
+    if filtered_employee_names:
         current = row['Employee']
-        default_idx = employee_names.index(current) if current in employee_names else 0
+        default_idx = filtered_employee_names.index(current) if current in filtered_employee_names else 0
         cols[2].selectbox(
             "Сотрудник",
-            options=employee_names,
+            options=filtered_employee_names,
             index=default_idx,
             key=f"sel_{row['shift_id']}",
             on_change=update_employee,
