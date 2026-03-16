@@ -30,7 +30,6 @@ with st.sidebar:
     if st.session_state.role == "admin":
         st.write(f"**Администратор**")
     else:
-        # Для директора показываем код магазина (store)
         st.write(f"**Директор** (store: {st.session_state.store})")
     if st.button("🚪 Выйти"):
         logout()
@@ -53,29 +52,23 @@ if shifts_df is None:
     st.error("Ошибка загрузки данных")
     st.stop()
 
-# Если пользователь директор, показываем только смены с его store
+# Для администратора создаём копию всех смен, для директора фильтруем по его store
 if st.session_state.role == "director":
     shifts_df = shifts_df[shifts_df['Store'] == st.session_state.store].copy()
+    if shifts_df.empty:
+        st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
+        st.stop()
 
-# Проверяем, есть ли смены после фильтрации
-if shifts_df.empty:
-    st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
-    st.stop()
-
-# Загружаем список магазинов (name_store.csv) – используется только для аутентификации,
-# но здесь не нужен для назначений. Оставляем для возможного расширения.
+# Загружаем список магазинов (name_store.csv) – только для аутентификации, но оставим на будущее
 stores_df = get_name_store()
 
 # Загружаем список сотрудников из employees.csv
 employees_df = get_employees()
 if st.session_state.role == "director":
-    # Фильтруем только тех, у кого store совпадает с store директора
     employees_df = employees_df[employees_df['store'].astype(str) == st.session_state.store]
 
 # Сохраняем employees_df в сессии для использования в функциях обратного вызова
 st.session_state.employees_df = employees_df
-
-# Создаём список имён для выпадающего списка (пустая строка + имена сотрудников)
 employee_names = [''] + sorted(employees_df['name'].unique().tolist())
 
 # --- Раздел для администратора: управление сотрудниками (исполнителями) ---
@@ -89,32 +82,28 @@ if st.session_state.role == "admin":
             new_store = st.text_input("Store (код)")
         if st.button("➕ Добавить сотрудника"):
             if new_name and new_store:
-                # Проверяем, нет ли уже такого имени
                 if new_name in employees_df['name'].values:
-                    st.warning("Сотрудник с таким именем уже существует. Используйте другое имя.")
+                    st.warning("Сотрудник с таким именем уже существует.")
                 else:
                     new_row = pd.DataFrame({"name": [new_name], "store": [new_store]})
                     employees_df = pd.concat([employees_df, new_row], ignore_index=True)
                     save_employees(employees_df)
-                    # Обновляем сессию
                     st.session_state.employees_df = employees_df
                     st.success(f"Сотрудник {new_name} добавлен")
                     st.rerun()
             else:
                 st.error("Заполните оба поля")
 
-    # Таблица существующих сотрудников с возможностью удаления
     st.subheader("Список сотрудников")
     if not employees_df.empty:
         for idx, row in employees_df.iterrows():
             cola, colb, colc = st.columns([3, 1, 1])
             cola.write(f"**{row['name']}** (store: {row['store']})")
             if colb.button("✏️", key=f"edit_{idx}"):
-                st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
+                st.info("Редактирование пока не реализовано")
             if colc.button("🗑️", key=f"del_{idx}"):
-                # Проверим, не назначен ли этот сотрудник на смены в текущем наборе
                 if row['name'] in shifts_df['Employee'].values:
-                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены в этом наборе. Сначала уберите его из всех смен.")
+                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены.")
                 else:
                     employees_df = employees_df.drop(idx).reset_index(drop=True)
                     save_employees(employees_df)
@@ -122,14 +111,27 @@ if st.session_state.role == "admin":
                     st.rerun()
     else:
         st.info("Нет сотрудников")
-
     st.markdown("---")
 
-# --- Основной интерфейс планирования (общий для всех) ---
+# --- Основной интерфейс планирования ---
 st.header("📅 Планирование смен")
 
+# Фильтр по store для администратора
+if st.session_state.role == "admin":
+    available_stores = sorted(shifts_df['Store'].unique())
+    selected_store_filter = st.selectbox("Фильтр по магазину (store)", ['Все'] + available_stores)
+    if selected_store_filter != 'Все':
+        filtered_shifts_df = shifts_df[shifts_df['Store'] == selected_store_filter]
+    else:
+        filtered_shifts_df = shifts_df
+else:
+    filtered_shifts_df = shifts_df  # для директора уже отфильтровано
+
 # Выбор недели
-all_dates = pd.to_datetime(shifts_df['Date'])
+all_dates = pd.to_datetime(filtered_shifts_df['Date'])
+if all_dates.empty:
+    st.warning("Нет смен для отображения с выбранным фильтром.")
+    st.stop()
 min_date = all_dates.min().date()
 max_date = all_dates.max().date()
 
@@ -147,10 +149,10 @@ def get_week_dates(selected_date):
 week_dates = get_week_dates(selected_day)
 st.caption(f"Неделя: {week_dates[0]} — {week_dates[-1]}")
 
-week_shifts = shifts_df[shifts_df['Date'].isin(week_dates)].copy()
+week_shifts = filtered_shifts_df[filtered_shifts_df['Date'].isin(week_dates)].copy()
 week_shifts.sort_values(['Date', 'Start'], inplace=True)
 
-if len(week_shifts) == 0:
+if week_shifts.empty:
     st.warning("На этой неделе нет смен.")
     st.stop()
 
@@ -173,7 +175,6 @@ def has_overlap(shift_id, employee, shifts_df):
 def update_employee(shift_id):
     selected = st.session_state.get(f"sel_{shift_id}", "")
     if not selected:
-        # Если выбрали пустоту, просто очищаем
         shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = ''
         save_assignments(selected_import_id, shifts_df, published=True)
         st.rerun()
@@ -183,27 +184,24 @@ def update_employee(shift_id):
     shift_row = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
     shift_store = shift_row['Store']
 
-    # Проверяем, что выбранный сотрудник принадлежит нужному store (если не admin)
-    if st.session_state.role != "admin":
-        emp_store_row = st.session_state.employees_df[st.session_state.employees_df['name'] == selected]
-        if emp_store_row.empty:
-            st.error(f"Сотрудник {selected} не найден в базе")
-            st.session_state[f"sel_{shift_id}"] = ''
-            return
-        emp_store = str(emp_store_row.iloc[0]['store'])
-        if emp_store != shift_store:
-            st.error(f"Сотрудник {selected} принадлежит store {emp_store}, но смена требует store {shift_store}. Назначение невозможно.")
-            st.session_state[f"sel_{shift_id}"] = ''
-            return
+    # Проверяем, что выбранный сотрудник принадлежит нужному store (для всех ролей)
+    emp_store_row = st.session_state.employees_df[st.session_state.employees_df['name'] == selected]
+    if emp_store_row.empty:
+        st.error(f"Сотрудник {selected} не найден в базе")
+        st.session_state[f"sel_{shift_id}"] = ''
+        return
+    emp_store = str(emp_store_row.iloc[0]['store'])
+    if emp_store != shift_store:
+        st.error(f"Сотрудник {selected} принадлежит store {emp_store}, но смена требует store {shift_store}. Назначение невозможно.")
+        st.session_state[f"sel_{shift_id}"] = ''
+        return
 
     # Проверяем актуальные назначения из GitHub
     current_assignments = get_assignments_from_github(selected_import_id)
     if current_assignments is not None:
         str_shift_id = str(shift_id)
         if str_shift_id in current_assignments and current_assignments[str_shift_id] != '':
-            # Конфликт: смена уже занята
             st.error(f"⚠️ Смена {shift_id} уже занята сотрудником {current_assignments[str_shift_id]}. Обновите страницу.")
-            # Сбрасываем selectbox
             st.session_state[f"sel_{shift_id}"] = ''
             st.rerun()
             return
@@ -215,11 +213,10 @@ def update_employee(shift_id):
         for o in overlaps:
             msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
         st.toast(msg, icon="⚠️")
-        # Сбрасываем selectbox
         st.session_state[f"sel_{shift_id}"] = ''
         return
 
-    # Повторная проверка перед сохранением (на случай, если состояние изменилось за время проверки)
+    # Повторная проверка перед сохранением
     current_assignments_final = get_assignments_from_github(selected_import_id)
     if current_assignments_final is not None:
         str_shift_id = str(shift_id)
@@ -229,13 +226,12 @@ def update_employee(shift_id):
             st.rerun()
             return
 
-    # Всё хорошо, назначаем
     shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = selected
     st.toast(f"✅ Смена {shift_id} → {selected}")
     save_assignments(selected_import_id, shifts_df, published=True)
     st.rerun()
 
-# Отображение смен по дням с учётом доступности сотрудников
+# Отображение смен по дням
 current_date = None
 for _, row in week_shifts.iterrows():
     if row['Date'] != current_date:
@@ -244,9 +240,7 @@ for _, row in week_shifts.iterrows():
     
     current_employee = row['Employee']
     
-    # Проверяем, есть ли текущий сотрудник в списке доступных для этого пользователя
     if current_employee and current_employee not in employee_names:
-        # Смена занята сотрудником, недоступным для выбора
         cols = st.columns([2, 2, 4])
         cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
         cols[1].write(f"({row['Duration']} ч)")
@@ -254,7 +248,6 @@ for _, row in week_shifts.iterrows():
         st.divider()
         continue
     
-    # Иначе показываем selectbox для назначения
     cols = st.columns([2, 2, 4])
     cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
     cols[1].write(f"({row['Duration']} ч)")
