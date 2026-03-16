@@ -54,7 +54,11 @@ if shifts_df is None:
 
 # Загружаем список магазинов (name_store.csv) для отображения названий
 stores_df = get_name_store()
+# Маппинг код -> название
 store_name_map = dict(zip(stores_df['store'].astype(str), stores_df['name']))
+# Маппинг название -> код (для выбора в селекте)
+store_name_to_code = dict(zip(stores_df['name'].astype(str), stores_df['store'].astype(str)))
+store_names = sorted(store_name_to_code.keys())
 
 # Если пользователь директор, показываем только смены с его store
 if st.session_state.role == "director":
@@ -80,7 +84,13 @@ if st.session_state.role == "admin":
         with col1:
             new_name = st.text_input("Имя сотрудника")
         with col2:
-            new_store = st.text_input("Store (код)")
+            # Выбор магазина по названию
+            if store_names:
+                selected_store_name = st.selectbox("Магазин", store_names)
+                new_store = store_name_to_code[selected_store_name]
+            else:
+                st.warning("Нет доступных магазинов. Сначала добавьте магазины в name_store.csv")
+                new_store = None
         if st.button("➕ Добавить сотрудника"):
             if new_name and new_store:
                 if new_name in employees_df['name'].values:
@@ -90,21 +100,25 @@ if st.session_state.role == "admin":
                     employees_df = pd.concat([employees_df, new_row], ignore_index=True)
                     save_employees(employees_df)
                     st.session_state.employees_df = employees_df
-                    st.success(f"Сотрудник {new_name} добавлен")
+                    st.success(f"Сотрудник {new_name} добавлен в магазин {selected_store_name}")
                     st.rerun()
             else:
                 st.error("Заполните оба поля")
 
+    # Таблица существующих сотрудников с возможностью удаления
     st.subheader("Список сотрудников")
     if not employees_df.empty:
         for idx, row in employees_df.iterrows():
-            cola, colb, colc = st.columns([3, 1, 1])
-            cola.write(f"**{row['name']}** (store: {row['store']})")
-            if colb.button("✏️", key=f"edit_{idx}"):
-                st.info("Редактирование пока не реализовано")
-            if colc.button("🗑️", key=f"del_{idx}"):
+            store_code = str(row['store'])
+            store_name = store_name_map.get(store_code, store_code)
+            cola, colb, colc, cold = st.columns([3, 2, 1, 1])
+            cola.write(f"**{row['name']}**")
+            colb.write(f"магазин: {store_name} ({store_code})")
+            if colc.button("✏️", key=f"edit_{idx}"):
+                st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
+            if cold.button("🗑️", key=f"del_{idx}"):
                 if row['name'] in shifts_df['Employee'].values:
-                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены.")
+                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены в этом наборе.")
                 else:
                     employees_df = employees_df.drop(idx).reset_index(drop=True)
                     save_employees(employees_df)
