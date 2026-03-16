@@ -1,6 +1,5 @@
 import streamlit as st
 import time
-from datetime import datetime, timedelta
 import pandas as pd
 import os
 
@@ -20,15 +19,20 @@ def authenticate(login, password):
     Проверяет логин и пароль.
     Возвращает (role, store) где role: 'admin' или 'director', store: код для директора (или None для admin).
     """
+    # Админ с фиксированным паролем
     if login == "admin" and password == "@lternat!v@35":
         return "admin", None
 
-    # Для директора: логин должен быть 'md', пароль — существующий store в name_store.csv
-    if login == "md":
-        df = load_name_store()
-        # Проверяем, есть ли такой store в колонке store (как строка)
-        if password in df['store'].astype(str).values:
-            return "director", password
+    # Для директора: логин должен начинаться с 'md', после чего идёт код магазина,
+    # пароль должен совпадать с этим кодом, и этот код должен существовать в name_store.csv
+    if login.startswith("md"):
+        potential_store = login[2:]  # всё, что после 'md'
+        if potential_store == password:
+            df = load_name_store()
+            # Проверяем, есть ли такой store в колонке store (как строка)
+            if potential_store in df['store'].astype(str).values:
+                return "director", potential_store
+
     return None, None
 
 def init_session_state():
