@@ -1,18 +1,6 @@
 import streamlit as st
 import time
-import pandas as pd
-import os
-
-# Файл с данными сотрудников (name, store)
-NAME_STORE_CSV = "name_store.csv"
-
-def load_name_store():
-    """Загружает name_store.csv из локальной копии (или из GitHub в будущем)."""
-    if os.path.exists(NAME_STORE_CSV):
-        return pd.read_csv(NAME_STORE_CSV)
-    else:
-        # Если файла нет, возвращаем пустой DataFrame
-        return pd.DataFrame(columns=["name", "store"])
+from data_manager import get_name_store  # импортируем функцию, работающую с GitHub
 
 def authenticate(login, password):
     """
@@ -28,7 +16,7 @@ def authenticate(login, password):
     if login.startswith("md"):
         potential_store = login[2:]  # всё, что после 'md'
         if potential_store == password:
-            df = load_name_store()
+            df = get_name_store()  # загружает актуальные данные (локально + GitHub)
             # Проверяем, есть ли такой store в колонке store (как строка)
             if potential_store in df['store'].astype(str).values:
                 return "director", potential_store
