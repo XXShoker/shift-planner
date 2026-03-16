@@ -6,6 +6,7 @@ import time
 import base64
 from datetime import datetime
 from github import Github, GithubException
+from io import StringIO  # добавлен импорт
 
 GH_TOKEN = os.environ.get("GH_TOKEN")
 GH_REPO = os.environ.get("GH_REPO")
@@ -280,7 +281,8 @@ def cleanup_drafts():
     if removed_count > 0:
         save_drafts_metadata(valid_drafts)
     return removed_count
-    
+
+# ---------- Работа с name_store.csv ----------
 NAME_STORE_PATH = "name_store.csv"
 
 def get_name_store():
@@ -290,7 +292,6 @@ def get_name_store():
         try:
             contents = repo.get_contents(NAME_STORE_PATH, ref="main")
             content = base64.b64decode(contents.content).decode("utf-8")
-            from io import StringIO
             df = pd.read_csv(StringIO(content))
             # Сохраняем локально для кэша
             df.to_csv(NAME_STORE_PATH, index=False)
@@ -324,7 +325,6 @@ def refresh_name_store():
     """Принудительно загружает name_store.csv из GitHub."""
     return get_name_store()  # get_name_store уже обновляет локальный кэш
 
-# ---------- Проверка актуальности назначений ----------
 def get_assignments_from_github(import_id):
     """Загружает назначения для import_id напрямую из GitHub."""
     repo = get_repo()
