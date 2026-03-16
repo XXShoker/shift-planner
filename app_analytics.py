@@ -11,6 +11,7 @@ from data_manager import (
     refresh_published_metadata,
     cleanup_drafts
 )
+from io import StringIO
 
 st.set_page_config(layout="wide")
 st.title("📊 Shift Planner – Аналитика")
