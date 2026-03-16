@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -338,4 +337,3 @@ with tab3:
     st.dataframe(emp_sum, width='stretch')
     csv_emp = emp_sum.to_csv(index=False, sep=';')
     st.download_button("Скачать статистику", csv_emp, "employee_stats.csv", width='stretch')
-```
