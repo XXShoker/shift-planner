@@ -30,7 +30,7 @@ st.sidebar.write(f"upload_processed: {st.session_state.upload_processed}")
 # --- Загрузка нового файла ---
 st.header("📁 Загрузить новый файл смен")
 with st.expander("Требуемый формат CSV (разделитель ;)"):
-    st.code("Date;Start;Duration;Count\n2024-01-15;9;8;2")
+    st.code("Date;Start;Duration;Count;Store\n2024-01-15;9;8;2;12345")
 
 uploaded = st.file_uploader("Выберите CSV файл", type="csv", key="file_uploader")
 
@@ -44,14 +44,16 @@ if uploaded is not None:
     if not st.session_state.upload_processed:
         try:
             df = pd.read_csv(uploaded, delimiter=';')
-            if set(df.columns) >= {'Date', 'Start', 'Duration', 'Count'}:
+            # Проверяем наличие обязательных колонок
+            required_cols = {'Date', 'Start', 'Duration', 'Count', 'Store'}
+            if set(df.columns) >= required_cols:
                 import_id = generate_import_id()
                 save_uploaded_shifts(import_id, df)
                 st.success(f"✅ Файл загружен. ID: {import_id}")
                 st.session_state.upload_processed = True
-                # НЕ вызываем st.rerun() – просто показываем сообщение
             else:
-                st.error("❌ Неверный формат. Нужны колонки: Date, Start, Duration, Count")
+                missing = required_cols - set(df.columns)
+                st.error(f"❌ Неверный формат. Отсутствуют колонки: {missing}")
         except Exception as e:
             st.error(f"❌ Ошибка чтения: {e}")
     else:
@@ -146,8 +148,20 @@ if 'selected_analytics' in st.session_state:
     col4.metric("Всего часов", total_hours)
     st.metric("Часов назначено", assigned_hours)
 
+    # Статистика по store
+    st.subheader("Статистика по магазинам (store)")
+    store_stats = shifts.groupby('Store').agg(
+        Всего_смен=('shift_id', 'count'),
+        Назначено=('Employee', lambda x: (x != '').sum()),
+        Часов_всего=('Duration', 'sum'),
+        Часов_назначено=('Duration', lambda x: x[shifts.loc[x.index, 'Employee'] != ''].sum())
+    ).reset_index()
+    store_stats['Свободно'] = store_stats['Всего_смен'] - store_stats['Назначено']
+    store_stats['% назначено'] = (store_stats['Назначено'] / store_stats['Всего_смен'] * 100).round(1)
+    st.dataframe(store_stats, use_container_width=True)
+
     st.subheader("Сводка по исходным сменам (сгруппировано)")
-    grouped = shifts.groupby(['Date', 'Start', 'Duration']).agg(
+    grouped = shifts.groupby(['Date', 'Start', 'Duration', 'Store']).agg(
         Всего_смен=('shift_id', 'count'),
         Назначено=('Employee', lambda x: (x != '').sum()),
         Сотрудники=('Employee', lambda x: ', '.join([e for e in x if e != '']) if any(x != '') else '—')
@@ -156,7 +170,7 @@ if 'selected_analytics' in st.session_state:
     st.dataframe(grouped, use_container_width=True)
 
     with st.expander("Показать детальную таблицу всех смен"):
-        detailed = shifts[['Date', 'Start', 'End', 'Duration', 'Employee']].copy()
+        detailed = shifts[['Date', 'Start', 'End', 'Duration', 'Employee', 'Store']].copy()
         detailed['Start'] = detailed['Start'].apply(lambda x: f"{x:02d}:00")
         detailed['End'] = detailed['End'].apply(lambda x: f"{x:02d}:00")
         st.dataframe(detailed, use_container_width=True)
