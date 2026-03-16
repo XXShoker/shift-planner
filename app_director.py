@@ -6,6 +6,7 @@ import time
 from data_manager import (
     get_published_imports, load_shifts, save_assignments,
     get_name_store, save_name_store, refresh_name_store,
+    get_employees, save_employees,
     get_assignments_from_github
 )
 from auth import init_session_state, check_activity_timeout, logout, show_login_form
@@ -29,6 +30,7 @@ with st.sidebar:
     if st.session_state.role == "admin":
         st.write(f"**Администратор**")
     else:
+        # Для директора показываем код магазина (store)
         st.write(f"**Директор** (store: {st.session_state.store})")
     if st.button("🚪 Выйти"):
         logout()
@@ -60,8 +62,12 @@ if shifts_df.empty:
     st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
     st.stop()
 
-# Загружаем список исполнителей из name_store.csv
-employees_df = get_name_store()
+# Загружаем список магазинов (name_store.csv) – используется только для аутентификации,
+# но здесь не нужен для назначений. Оставляем для возможного расширения.
+stores_df = get_name_store()
+
+# Загружаем список сотрудников из employees.csv
+employees_df = get_employees()
 if st.session_state.role == "director":
     # Фильтруем только тех, у кого store совпадает с store директора
     employees_df = employees_df[employees_df['store'].astype(str) == st.session_state.store]
@@ -69,54 +75,53 @@ if st.session_state.role == "director":
 # Сохраняем employees_df в сессии для использования в функциях обратного вызова
 st.session_state.employees_df = employees_df
 
-# Создаём список имён для выпадающего списка
+# Создаём список имён для выпадающего списка (пустая строка + имена сотрудников)
 employee_names = [''] + sorted(employees_df['name'].unique().tolist())
 
-# --- Раздел для администратора: управление исполнителями ---
+# --- Раздел для администратора: управление сотрудниками (исполнителями) ---
 if st.session_state.role == "admin":
-    st.header("👥 Управление исполнителями")
-    with st.expander("Добавить/редактировать исполнителя", expanded=False):
+    st.header("👥 Управление сотрудниками (исполнителями)")
+    with st.expander("Добавить сотрудника", expanded=False):
         col1, col2 = st.columns(2)
         with col1:
-            new_name = st.text_input("Имя исполнителя")
+            new_name = st.text_input("Имя сотрудника")
         with col2:
             new_store = st.text_input("Store (код)")
-        if st.button("➕ Добавить исполнителя"):
+        if st.button("➕ Добавить сотрудника"):
             if new_name and new_store:
                 # Проверяем, нет ли уже такого имени
                 if new_name in employees_df['name'].values:
-                    st.warning("Исполнитель с таким именем уже существует. Используйте редактирование.")
+                    st.warning("Сотрудник с таким именем уже существует. Используйте другое имя.")
                 else:
                     new_row = pd.DataFrame({"name": [new_name], "store": [new_store]})
                     employees_df = pd.concat([employees_df, new_row], ignore_index=True)
-                    save_name_store(employees_df)
+                    save_employees(employees_df)
                     # Обновляем сессию
                     st.session_state.employees_df = employees_df
-                    st.success(f"Исполнитель {new_name} добавлен")
+                    st.success(f"Сотрудник {new_name} добавлен")
                     st.rerun()
             else:
                 st.error("Заполните оба поля")
 
-    # Таблица существующих исполнителей с возможностью удаления
-    st.subheader("Список исполнителей")
+    # Таблица существующих сотрудников с возможностью удаления
+    st.subheader("Список сотрудников")
     if not employees_df.empty:
-        # Для удаления используем колонку с кнопками
         for idx, row in employees_df.iterrows():
             cola, colb, colc = st.columns([3, 1, 1])
             cola.write(f"**{row['name']}** (store: {row['store']})")
             if colb.button("✏️", key=f"edit_{idx}"):
                 st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
             if colc.button("🗑️", key=f"del_{idx}"):
-                # Проверим, не назначен ли этот исполнитель на смены в текущем наборе
+                # Проверим, не назначен ли этот сотрудник на смены в текущем наборе
                 if row['name'] in shifts_df['Employee'].values:
                     st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены в этом наборе. Сначала уберите его из всех смен.")
                 else:
                     employees_df = employees_df.drop(idx).reset_index(drop=True)
-                    save_name_store(employees_df)
+                    save_employees(employees_df)
                     st.session_state.employees_df = employees_df
                     st.rerun()
     else:
-        st.info("Нет исполнителей")
+        st.info("Нет сотрудников")
 
     st.markdown("---")
 
