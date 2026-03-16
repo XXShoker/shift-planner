@@ -52,15 +52,16 @@ if shifts_df is None:
     st.error("Ошибка загрузки данных")
     st.stop()
 
-# Для администратора создаём копию всех смен, для директора фильтруем по его store
+# Загружаем список магазинов (name_store.csv) для отображения названий
+stores_df = get_name_store()
+store_name_map = dict(zip(stores_df['store'].astype(str), stores_df['name']))
+
+# Если пользователь директор, показываем только смены с его store
 if st.session_state.role == "director":
     shifts_df = shifts_df[shifts_df['Store'] == st.session_state.store].copy()
     if shifts_df.empty:
         st.warning(f"Для вашего store ({st.session_state.store}) нет смен в этом наборе.")
         st.stop()
-
-# Загружаем список магазинов (name_store.csv) – только для аутентификации, но оставим на будущее
-stores_df = get_name_store()
 
 # Загружаем список сотрудников из employees.csv
 employees_df = get_employees()
@@ -116,22 +117,32 @@ if st.session_state.role == "admin":
 # --- Основной интерфейс планирования ---
 st.header("📅 Планирование смен")
 
-# Фильтр по store для администратора
+# Фильтр по магазину для администратора (с отображением названий)
 if st.session_state.role == "admin":
     available_stores = sorted(shifts_df['Store'].unique())
-    selected_store_filter = st.selectbox("Фильтр по магазину (store)", ['Все'] + available_stores)
-    if selected_store_filter != 'Все':
-        filtered_shifts_df = shifts_df[shifts_df['Store'] == selected_store_filter]
+    # Создаем список кортежей (отображаемое имя, код)
+    store_options = []
+    for store_code in available_stores:
+        display_name = store_name_map.get(str(store_code), store_code)  # если нет названия, показываем код
+        store_options.append((display_name, store_code))
+    # Сортируем по отображаемому имени
+    store_options.sort(key=lambda x: x[0])
+    # Для выпадающего списка используем отображаемое имя, значение храним как код
+    selected_display = st.selectbox("Фильтр по магазину", ['Все'] + [name for name, code in store_options])
+    if selected_display != 'Все':
+        selected_store_code = next(code for name, code in store_options if name == selected_display)
+        filtered_shifts_df = shifts_df[shifts_df['Store'] == selected_store_code].copy()
     else:
-        filtered_shifts_df = shifts_df
+        filtered_shifts_df = shifts_df.copy()
 else:
-    filtered_shifts_df = shifts_df  # для директора уже отфильтровано
+    filtered_shifts_df = shifts_df.copy()
 
 # Выбор недели
-all_dates = pd.to_datetime(filtered_shifts_df['Date'])
-if all_dates.empty:
+if filtered_shifts_df.empty:
     st.warning("Нет смен для отображения с выбранным фильтром.")
     st.stop()
+
+all_dates = pd.to_datetime(filtered_shifts_df['Date'])
 min_date = all_dates.min().date()
 max_date = all_dates.max().date()
 
@@ -235,7 +246,9 @@ def update_employee(shift_id):
 current_date = None
 for _, row in week_shifts.iterrows():
     if row['Date'] != current_date:
-        st.markdown(f"### {row['Date']} (store: {row['Store']})")
+        # Для администратора показываем также название магазина, если есть
+        store_display = store_name_map.get(str(row['Store']), row['Store'])
+        st.markdown(f"### {row['Date']} (store: {row['Store']} - {store_display})")
         current_date = row['Date']
     
     current_employee = row['Employee']
