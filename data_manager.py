@@ -166,13 +166,16 @@ def load_shifts(import_id, with_assignments=False, published=False):
     expanded = []
     shift_id = 0
     for _, row in df.iterrows():
+        # Проверяем наличие колонки Store, если нет – ставим пустую строку
+        store = row.get('Store', '')
         for i in range(int(row['Count'])):
             expanded.append({
                 'shift_id': shift_id,
                 'Date': row['Date'],
                 'Start': int(row['Start']),
                 'Duration': int(row['Duration']),
-                'Employee': ''
+                'Employee': '',
+                'Store': str(store)  # добавляем Store
             })
             shift_id += 1
     shifts_df = pd.DataFrame(expanded)
