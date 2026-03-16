@@ -339,3 +339,37 @@ def get_assignments_from_github(import_id):
         return json.loads(content)
     except GithubException:
         return None
+
+# ---------- Работа с employees.csv ----------
+EMPLOYEES_PATH = "employees.csv"
+
+def get_employees():
+    """Возвращает DataFrame с сотрудниками (name, store)."""
+    repo = get_repo()
+    if repo:
+        try:
+            contents = repo.get_contents(EMPLOYEES_PATH, ref="main")
+            content = base64.b64decode(contents.content).decode("utf-8")
+            df = pd.read_csv(StringIO(content))
+            df.to_csv(EMPLOYEES_PATH, index=False)
+            return df
+        except GithubException as e:
+            if e.status == 404:
+                df = pd.DataFrame(columns=["name", "store"])
+                df.to_csv(EMPLOYEES_PATH, index=False)
+                return df
+            else:
+                if os.path.exists(EMPLOYEES_PATH):
+                    return pd.read_csv(EMPLOYEES_PATH)
+                return pd.DataFrame(columns=["name", "store"])
+    else:
+        if os.path.exists(EMPLOYEES_PATH):
+            return pd.read_csv(EMPLOYEES_PATH)
+        return pd.DataFrame(columns=["name", "store"])
+
+def save_employees(df):
+    """Сохраняет DataFrame с сотрудниками локально и в GitHub."""
+    df.to_csv(EMPLOYEES_PATH, index=False)
+    with open(EMPLOYEES_PATH, "rb") as f:
+        content_bytes = f.read()
+    save_file_to_github(EMPLOYEES_PATH, content_bytes, "Update employees.csv")
