@@ -2,19 +2,45 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import time
 from data_manager import (
-    get_published_imports, load_shifts, save_assignments
+    get_published_imports, load_shifts, save_assignments,
+    get_name_store, save_name_store, refresh_name_store,
+    get_assignments_from_github
 )
+from auth import init_session_state, check_activity_timeout, logout, show_login_form
 
 st.set_page_config(layout="wide")
-st.title("🎯 Shift Planner – Директор (назначение смен)")
 
-# --- Получаем список опубликованных наборов смен ---
+# Инициализация сессии и проверка таймаута
+init_session_state()
+check_activity_timeout()
+
+# Если не аутентифицирован — показываем форму входа и останавливаем выполнение
+if not st.session_state.authenticated:
+    show_login_form()
+    st.stop()
+
+# Главное приложение (после входа)
+st.title("🎯 Shift Planner")
+
+# Боковая панель с информацией о пользователе и кнопкой выхода
+with st.sidebar:
+    if st.session_state.role == "admin":
+        st.write(f"**Администратор**")
+    else:
+        st.write(f"**Директор** (store: {st.session_state.store})")
+    if st.button("🚪 Выйти"):
+        logout()
+        st.rerun()
+
+# Загружаем список опубликованных наборов смен
 published = get_published_imports()
 if not published:
     st.warning("Нет опубликованных смен. Дождитесь публикации от аналитика.")
     st.stop()
 
+# Выбор набора смен (общий для всех)
 options = {f"{item['import_id']} (загружен {item['uploaded_at'][:10]})": item['import_id'] for item in published}
 selected_label = st.selectbox("Выберите набор смен", list(options.keys()))
 selected_import_id = options[selected_label]
@@ -25,14 +51,65 @@ if shifts_df is None:
     st.error("Ошибка загрузки данных")
     st.stop()
 
-# --- Управление сотрудниками (в сессии) ---
-if 'available_employees' not in st.session_state:
-    st.session_state.available_employees = []
+# Загружаем список исполнителей из name_store.csv
+employees_df = get_name_store()
+if st.session_state.role == "director":
+    # Фильтруем только тех, у кого store совпадает с store директора
+    employees_df = employees_df[employees_df['store'].astype(str) == st.session_state.store]
 
-# --- Выбор недели ---
-st.markdown("---")
-st.header("📅 Планирование на неделю")
+# Создаём список имён для выпадающего списка
+employee_names = [''] + sorted(employees_df['name'].unique().tolist())
 
+# --- Раздел для администратора: управление исполнителями ---
+if st.session_state.role == "admin":
+    st.header("👥 Управление исполнителями")
+    with st.expander("Добавить/редактировать исполнителя", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Имя исполнителя")
+        with col2:
+            new_store = st.text_input("Store (код)")
+        if st.button("➕ Добавить исполнителя"):
+            if new_name and new_store:
+                # Проверяем, нет ли уже такого имени
+                if new_name in employees_df['name'].values:
+                    st.warning("Исполнитель с таким именем уже существует. Используйте редактирование.")
+                else:
+                    new_row = pd.DataFrame({"name": [new_name], "store": [new_store]})
+                    employees_df = pd.concat([employees_df, new_row], ignore_index=True)
+                    save_name_store(employees_df)
+                    st.success(f"Исполнитель {new_name} добавлен")
+                    st.rerun()
+            else:
+                st.error("Заполните оба поля")
+
+    # Таблица существующих исполнителей с возможностью удаления
+    st.subheader("Список исполнителей")
+    if not employees_df.empty:
+        # Для удаления используем колонку с кнопками
+        for idx, row in employees_df.iterrows():
+            cola, colb, colc = st.columns([3, 1, 1])
+            cola.write(f"**{row['name']}** (store: {row['store']})")
+            if colb.button("✏️", key=f"edit_{idx}"):
+                # Здесь можно реализовать редактирование, но для простоты оставим только удаление
+                st.info("Редактирование пока не реализовано, удалите и добавьте заново.")
+            if colc.button("🗑️", key=f"del_{idx}"):
+                # Проверим, не назначен ли этот исполнитель на какие-то смены
+                if row['name'] in shifts_df['Employee'].values:
+                    st.warning(f"Нельзя удалить {row['name']}, он уже назначен на смены. Сначала уберите его из всех смен.")
+                else:
+                    employees_df = employees_df.drop(idx).reset_index(drop=True)
+                    save_name_store(employees_df)
+                    st.rerun()
+    else:
+        st.info("Нет исполнителей")
+
+    st.markdown("---")
+
+# --- Основной интерфейс планирования (общий для всех) ---
+st.header("📅 Планирование смен")
+
+# Выбор недели
 all_dates = pd.to_datetime(shifts_df['Date'])
 min_date = all_dates.min().date()
 max_date = all_dates.max().date()
@@ -58,105 +135,91 @@ if len(week_shifts) == 0:
     st.warning("На этой неделе нет смен.")
     st.stop()
 
-# --- Боковая панель: сотрудники ---
-col_emp, col_main = st.columns([1, 3])
+# --- Функции для обработки назначений с проверкой конфликтов ---
+def has_overlap(shift_id, employee, shifts_df):
+    if not employee:
+        return False, []
+    cur = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
+    others = shifts_df[
+        (shifts_df['Date'] == cur['Date']) &
+        (shifts_df['Employee'] == employee) &
+        (shifts_df['shift_id'] != shift_id)
+    ]
+    overlapping = []
+    for _, o in others.iterrows():
+        if not (cur['End'] <= o['Start'] or cur['Start'] >= o['End']):
+            overlapping.append(o)
+    return len(overlapping) > 0, overlapping
 
-with col_emp:
-    st.subheader("👥 Сотрудники")
-    total = len(week_shifts)
-    assigned = len(week_shifts[week_shifts['Employee'] != ''])
-    free = total - assigned
-    st.info(f"Всего: {total} | Назначено: {assigned} | Свободно: {free}")
-    
-    if st.session_state.available_employees:
-        for emp in st.session_state.available_employees[:]:
-            cola, colb = st.columns([3,1])
-            cola.write(f"• {emp}")
-            if colb.button("❌", key=f"del_{emp}"):
-                if emp in shifts_df['Employee'].values:
-                    st.warning(f"Сначала уберите {emp} из всех смен!")
-                else:
-                    st.session_state.available_employees.remove(emp)
-                    st.rerun()
-    else:
-        st.write("_Нет добавленных сотрудников_")
-    
-    new_emp = st.text_input("Имя сотрудника", key="new_emp")
-    if st.button("➕ Добавить", use_container_width=True):
-        if new_emp and new_emp.strip() not in st.session_state.available_employees:
-            st.session_state.available_employees.append(new_emp.strip())
-            st.rerun()
+def update_employee(shift_id):
+    selected = st.session_state.get(f"sel_{shift_id}", "")
+    if not selected:
+        # Если выбрали пустоту, просто очищаем
+        shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = ''
+        save_assignments(selected_import_id, shifts_df, published=True)
+        st.rerun()
+        return
 
-# --- Основная область: назначение ---
-with col_main:
-    st.subheader("✏️ Назначение сотрудников")
-    if not st.session_state.available_employees:
-        st.warning("Добавьте сотрудников в левой панели")
-    
-    def has_overlap(shift_id, employee, shifts_df):
-        if not employee:
-            return False, []
-        cur = shifts_df[shifts_df['shift_id'] == shift_id].iloc[0]
-        others = shifts_df[
-            (shifts_df['Date'] == cur['Date']) &
-            (shifts_df['Employee'] == employee) &
-            (shifts_df['shift_id'] != shift_id)
-        ]
-        overlapping = []
-        for _, o in others.iterrows():
-            if not (cur['End'] <= o['Start'] or cur['Start'] >= o['End']):
-                overlapping.append(o)
-        return len(overlapping) > 0, overlapping
-
-    def update_employee(shift_id):
-        selected = st.session_state.get(f"sel_{shift_id}", "")
-        # Проверка пересечения
-        overlap, overlaps = has_overlap(shift_id, selected, shifts_df)
-        if overlap:
-            msg = f"⚠️ Пересечение: {selected} уже работает "
-            for o in overlaps:
-                msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
-            st.toast(msg, icon="⚠️")
+    # Проверяем, не занята ли уже эта смена другим (актуальные данные из GitHub)
+    current_assignments = get_assignments_from_github(selected_import_id)
+    if current_assignments is not None:
+        str_shift_id = str(shift_id)
+        if str_shift_id in current_assignments and current_assignments[str_shift_id] != '':
+            # Конфликт: смена уже занята
+            st.error(f"⚠️ Смена {shift_id} уже занята сотрудником {current_assignments[str_shift_id]}. "
+                     f"Обновите страницу, чтобы увидеть актуальное состояние.")
             # Сбрасываем selectbox
             st.session_state[f"sel_{shift_id}"] = ''
-            # Очищаем в DataFrame
-            shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = ''
-        else:
-            shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = selected
-            st.toast(f"✅ Смена {shift_id} → {selected}")
-        save_assignments(selected_import_id, shifts_df, published=True)
-        st.rerun()
+            st.rerun()
+            return
 
-    current_date = None
-    for _, row in week_shifts.iterrows():
-        if row['Date'] != current_date:
-            st.markdown(f"### {row['Date']}")
-            current_date = row['Date']
-        cols = st.columns([2,2,4])
-        cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
-        cols[1].write(f"({row['Duration']} ч)")
-        if st.session_state.available_employees:
-            emp_options = [''] + sorted(st.session_state.available_employees)
-            current = row['Employee']
-            default_idx = emp_options.index(current) if current in emp_options else 0
-            cols[2].selectbox(
-                "Сотрудник",
-                options=emp_options,
-                index=default_idx,
-                key=f"sel_{row['shift_id']}",
-                on_change=update_employee,
-                args=(row['shift_id'],),
-                label_visibility="collapsed"
-            )
-        else:
-            cols[2].info("Нет сотрудников")
-        st.divider()
-    
-    if st.button("🗑️ Очистить назначения на эту неделю", use_container_width=True):
-        mask = shifts_df['Date'].isin(week_dates)
-        shifts_df.loc[mask, 'Employee'] = ''
-        save_assignments(selected_import_id, shifts_df, published=True)
-        st.rerun()
+    # Проверяем пересечения с другими сменами того же сотрудника
+    overlap, overlaps = has_overlap(shift_id, selected, shifts_df)
+    if overlap:
+        msg = f"⚠️ Пересечение: {selected} уже работает "
+        for o in overlaps:
+            msg += f"{o['Start']:02d}:00-{o['End']:02d}:00 "
+        st.toast(msg, icon="⚠️")
+        # Сбрасываем selectbox
+        st.session_state[f"sel_{shift_id}"] = ''
+        return
+
+    # Всё хорошо, назначаем
+    shifts_df.loc[shifts_df['shift_id'] == shift_id, 'Employee'] = selected
+    st.toast(f"✅ Смена {shift_id} → {selected}")
+    save_assignments(selected_import_id, shifts_df, published=True)
+    st.rerun()
+
+# Отображение смен по дням
+current_date = None
+for _, row in week_shifts.iterrows():
+    if row['Date'] != current_date:
+        st.markdown(f"### {row['Date']}")
+        current_date = row['Date']
+    cols = st.columns([2,2,4])
+    cols[0].write(f"**{row['Start']:02d}:00 - {row['End']:02d}:00**")
+    cols[1].write(f"({row['Duration']} ч)")
+    if employee_names:
+        current = row['Employee']
+        default_idx = employee_names.index(current) if current in employee_names else 0
+        cols[2].selectbox(
+            "Сотрудник",
+            options=employee_names,
+            index=default_idx,
+            key=f"sel_{row['shift_id']}",
+            on_change=update_employee,
+            args=(row['shift_id'],),
+            label_visibility="collapsed"
+        )
+    else:
+        cols[2].info("Нет доступных сотрудников")
+    st.divider()
+
+if st.button("🗑️ Очистить назначения на эту неделю", use_container_width=True):
+    mask = shifts_df['Date'].isin(week_dates)
+    shifts_df.loc[mask, 'Employee'] = ''
+    save_assignments(selected_import_id, shifts_df, published=True)
+    st.rerun()
 
 # --- Визуализация Gantt ---
 st.markdown("---")
